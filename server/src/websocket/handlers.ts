@@ -66,10 +66,13 @@ function handleRoomCreate(
   // Associate client with room
   server.setClientRoom(client.id, room.id);
 
-  // Send room state to creator
+  // Send room state to creator (include their ID)
   server.send(client.id, {
     type: 'room:state',
-    payload: { room: roomManager.serializeRoom(room) },
+    payload: {
+      room: roomManager.serializeRoom(room),
+      yourParticipantId: client.id,
+    },
   });
 
   console.log(`Room created: ${room.code} by ${displayName}`);
@@ -106,11 +109,14 @@ function handleRoomJoin(
   // Associate client with room
   server.setClientRoom(client.id, room.id);
 
-  // Send room state to new participant
+  // Send room state to new participant (include their ID)
   const updatedRoom = roomManager.getRoom(room.id)!;
   server.send(client.id, {
     type: 'room:state',
-    payload: { room: roomManager.serializeRoom(updatedRoom) },
+    payload: {
+      room: roomManager.serializeRoom(updatedRoom),
+      yourParticipantId: client.id,
+    },
   });
 
   // Notify other participants
@@ -185,7 +191,7 @@ function handleRoomReady(
 
 function handleParticipantUpdate(
   client: ExtendedWebSocket,
-  payload: ParticipantUpdatePayload,
+  payload: Partial<ParticipantUpdatePayload> & Record<string, unknown>,
   server: SignalingServer
 ): void {
   if (!client.roomId) {
@@ -193,10 +199,11 @@ function handleParticipantUpdate(
     return;
   }
 
-  const { updates } = payload;
+  // Payload can be either { updates: {...} } or direct updates like { side: 'AFF' }
+  const updates = payload.updates || payload;
 
   // Apply updates
-  roomManager.updateParticipant(client.roomId, client.id, updates);
+  roomManager.updateParticipant(client.roomId, client.id, updates as Record<string, unknown>);
 
   // Broadcast updated room state
   const room = roomManager.getRoom(client.roomId);

@@ -1,3 +1,9 @@
+// Polyfills for simple-peer (must be first)
+import { Buffer } from 'buffer';
+import process from 'process';
+window.Buffer = Buffer;
+window.process = process;
+
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';

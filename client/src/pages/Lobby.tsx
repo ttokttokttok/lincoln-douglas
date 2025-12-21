@@ -13,10 +13,21 @@ export function Lobby() {
 
     setIsCreating(true);
     try {
-      // TODO: Implement room creation via WebSocket
-      console.log('Creating room:', { displayName, resolution });
-      // For now, navigate to a mock room
-      navigate('/room/test-room');
+      const response = await fetch('http://localhost:3001/api/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resolution }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to create room');
+      }
+
+      const data = await response.json();
+      // Store display name for later use
+      sessionStorage.setItem('displayName', displayName);
+      // Navigate using the room code from the server
+      navigate(`/room/${data.code}`);
     } catch (error) {
       console.error('Failed to create room:', error);
     } finally {
@@ -28,8 +39,8 @@ export function Lobby() {
     if (!displayName.trim() || !joinCode.trim()) return;
 
     try {
-      // TODO: Implement room joining via WebSocket
-      console.log('Joining room:', { displayName, joinCode });
+      // Store display name for later use
+      sessionStorage.setItem('displayName', displayName);
       navigate(`/room/${joinCode}`);
     } catch (error) {
       console.error('Failed to join room:', error);

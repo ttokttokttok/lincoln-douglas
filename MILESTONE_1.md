@@ -1,5 +1,7 @@
 # Milestone 1 — Room + Video Infrastructure Implementation Plan
 
+## Status: IN PROGRESS (Phase 4 of 5)
+
 ## Overview
 
 This document details the implementation strategy for Milestone 1 of the Cross-Language Lincoln-Douglas Debate Platform. We're building the foundational infrastructure: room management, WebRTC video connections, timer system, and language selection.
@@ -8,9 +10,31 @@ This document details the implementation strategy for Milestone 1 of the Cross-L
 
 ## Current State
 
-- **Codebase**: Greenfield project with no existing code
-- **Ready artifacts**: Technical specification (DEBATE_SYSTEM_PLAN.md)
-- **To build**: Everything from scratch
+- **Status**: Room + Video complete, Timer system pending
+- **Completed**: Room system, WebSocket, WebRTC P2P video/audio
+- **In Progress**: Timer system, debate flow
+- **Pending**: Speech transitions, integration polish
+
+### What's Working Now
+- ✅ Create room via REST API, get 6-char code
+- ✅ Join room via WebSocket with code
+- ✅ Real-time participant sync between clients
+- ✅ Side selection (AFF/NEG) with conflict prevention
+- ✅ Language selection (speaking/listening)
+- ✅ Ready state sync - both users see when opponent is ready
+- ✅ Zustand state management (roomStore.ts)
+- ✅ WebSocket reconnection logic with StrictMode handling
+- ✅ Camera/microphone access (useMediaStream hook)
+- ✅ WebRTC peer connection (usePeer hook with native RTCPeerConnection)
+- ✅ Video display (VideoPanel component)
+- ✅ Signal queuing for async stream handling
+- ✅ P2P video/audio connection between two clients
+
+### What's Not Yet Implemented
+- ❌ Timer countdown (useTimer hook)
+- ❌ Timer display (Timer component)
+- ❌ Debate start flow (when both ready)
+- ❌ Speech transitions
 
 ---
 
@@ -21,9 +45,11 @@ This document details the implementation strategy for Milestone 1 of the Cross-L
 |------------|--------|-----------|
 | Build Tool | **Vite** | Fast HMR, native ES modules, excellent TypeScript support |
 | Framework | **React 18 + TypeScript** | Type safety, modern hooks, great ecosystem |
-| WebRTC Library | **simple-peer** | Abstracts WebRTC complexity, well-maintained, good TypeScript support |
+| WebRTC | **Native RTCPeerConnection** | Direct browser API, no Node.js polyfill issues with Vite bundler |
 | Styling | **Tailwind CSS** | Rapid UI development, consistent design system |
 | State Management | **Zustand** | Lightweight, TypeScript-first, no boilerplate |
+
+> **Note**: Originally planned to use simple-peer, but switched to native RTCPeerConnection due to Node.js polyfill issues (Buffer, process, global) when bundling with Vite. Native API works cleanly in browser environment.
 
 ### Backend
 | Technology | Choice | Rationale |
@@ -59,8 +85,8 @@ This document details the implementation strategy for Milestone 1 of the Cross-L
 │              └───────────┬───────────┘                                   │
 │                          │                                               │
 │              ┌───────────┴───────────┐                                   │
-│              │     RTCPeerConnection │ ← Video/Audio streams             │
-│              │     (via simple-peer) │                                   │
+│              │   RTCPeerConnection   │ ← Video/Audio streams (P2P)       │
+│              │   (native browser API)│                                   │
 │              └───────────────────────┘                                   │
 └─────────────────────────────────────────────────────────────────────────┘
                            │
@@ -544,95 +570,119 @@ export const MICRO_SPEECH_TIMES: Record<string, number> = {
 
 #### 3.2 WebRTC Hook (client/src/hooks/usePeer.ts)
 
+Uses native RTCPeerConnection API instead of simple-peer to avoid Node.js polyfill issues.
+
 ```typescript
-import { useRef, useCallback, useEffect } from 'react';
-import SimplePeer, { Instance, SignalData } from 'simple-peer';
+import { useRef, useCallback, useEffect, useState } from 'react';
 import { ICE_SERVERS } from '../lib/constants';
+
+// Signal data type for WebRTC signaling
+export interface SignalData {
+  type: 'offer' | 'answer' | 'candidate';
+  sdp?: string;
+  candidate?: RTCIceCandidateInit;
+}
 
 interface UsePeerOptions {
   localStream: MediaStream | null;
-  onStream: (stream: MediaStream) => void;
+  onRemoteStream: (stream: MediaStream) => void;
   onSignal: (signal: SignalData) => void;
-  onConnect: () => void;
-  onClose: () => void;
-  onError: (error: Error) => void;
+  onConnect?: () => void;
+  onClose?: () => void;
+  onError?: (error: Error) => void;
 }
 
 export function usePeer(options: UsePeerOptions) {
-  const peerRef = useRef<Instance | null>(null);
-  const { localStream, onStream, onSignal, onConnect, onClose, onError } = options;
+  const { localStream, onRemoteStream, onSignal, onConnect, onClose, onError } = options;
+  const peerRef = useRef<RTCPeerConnection | null>(null);
+  const [state, setState] = useState({ isConnecting: false, isConnected: false, error: null });
 
-  const createPeer = useCallback((initiator: boolean) => {
-    if (!localStream) {
-      console.warn('No local stream available');
-      return;
-    }
+  // Create peer connection
+  const createPeer = useCallback(async (initiator: boolean) => {
+    if (!localStream) return null;
 
-    // Clean up existing peer
+    // Cleanup existing peer
     if (peerRef.current) {
-      peerRef.current.destroy();
+      peerRef.current.close();
     }
 
-    const peer = new SimplePeer({
-      initiator,
-      stream: localStream,
-      trickle: true,
-      config: { iceServers: ICE_SERVERS },
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    peerRef.current = pc;
+    setState({ isConnecting: true, isConnected: false, error: null });
+
+    // Add local tracks
+    localStream.getTracks().forEach((track) => {
+      pc.addTrack(track, localStream);
     });
 
-    peer.on('signal', (data) => {
-      onSignal(data);
-    });
+    // Handle incoming tracks
+    pc.ontrack = (event) => {
+      if (event.streams[0]) {
+        onRemoteStream(event.streams[0]);
+      }
+    };
 
-    peer.on('stream', (stream) => {
-      onStream(stream);
-    });
+    // Handle ICE candidates
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        onSignal({ type: 'candidate', candidate: event.candidate.toJSON() });
+      }
+    };
 
-    peer.on('connect', () => {
-      console.log('Peer connected');
-      onConnect();
-    });
+    // Handle connection state
+    pc.onconnectionstatechange = () => {
+      switch (pc.connectionState) {
+        case 'connected':
+          setState({ isConnecting: false, isConnected: true, error: null });
+          onConnect?.();
+          break;
+        case 'disconnected':
+        case 'failed':
+        case 'closed':
+          setState({ isConnecting: false, isConnected: false, error: null });
+          onClose?.();
+          break;
+      }
+    };
 
-    peer.on('close', () => {
-      console.log('Peer closed');
-      onClose();
-    });
-
-    peer.on('error', (err) => {
-      console.error('Peer error:', err);
-      onError(err);
-    });
-
-    peerRef.current = peer;
-    return peer;
-  }, [localStream, onSignal, onStream, onConnect, onClose, onError]);
-
-  const signal = useCallback((data: SignalData) => {
-    if (peerRef.current) {
-      peerRef.current.signal(data);
+    // If initiator, create and send offer
+    if (initiator) {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      onSignal({ type: 'offer', sdp: offer.sdp });
     }
-  }, []);
+
+    return pc;
+  }, [localStream, onSignal, onRemoteStream, onConnect, onClose]);
+
+  // Handle incoming signal
+  const signal = useCallback(async (data: SignalData) => {
+    const pc = peerRef.current;
+    if (!pc) return;
+
+    if (data.type === 'offer') {
+      await pc.setRemoteDescription({ type: 'offer', sdp: data.sdp });
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      onSignal({ type: 'answer', sdp: answer.sdp });
+    } else if (data.type === 'answer') {
+      await pc.setRemoteDescription({ type: 'answer', sdp: data.sdp });
+    } else if (data.type === 'candidate' && data.candidate) {
+      await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+    }
+  }, [onSignal]);
 
   const destroy = useCallback(() => {
     if (peerRef.current) {
-      peerRef.current.destroy();
+      peerRef.current.close();
       peerRef.current = null;
+      setState({ isConnecting: false, isConnected: false, error: null });
     }
   }, []);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      destroy();
-    };
-  }, [destroy]);
+  useEffect(() => () => { peerRef.current?.close(); }, []);
 
-  return {
-    peer: peerRef.current,
-    createPeer,
-    signal,
-    destroy,
-  };
+  return { ...state, createPeer, signal, destroy };
 }
 ```
 
@@ -1121,21 +1171,61 @@ Client A (Host)                    Server                    Client B (Guest)
 ### Signaling Flow for WebRTC
 
 ```
-Client A                           Server                    Client B
+Client A (Initiator)               Server                    Client B (Responder)
      |                               |                             |
-     |-- signal:offer -------------->|                             |
-     |                               |-- signal:offer ------------>|
+     | [localStream ready]           |                             |
+     |-- signal:offer (SDP) -------->|                             |
+     |-- signal:ice (candidate) ---->|                             |
+     |-- signal:ice (candidate) ---->|                             |
+     |                               |-- signal:offer ------------>| [queued if no stream]
+     |                               |-- signal:ice -------------->| [queued if no stream]
+     |                               |-- signal:ice -------------->| [queued if no stream]
      |                               |                             |
+     |                               |                             | [localStream ready]
+     |                               |                             | [process queued signals]
+     |                               |                             | [create responder peer]
      |                               |<-- signal:answer -----------|
      |<-- signal:answer -------------|                             |
      |                               |                             |
-     |-- signal:ice ---------------->|                             |
-     |                               |-- signal:ice -------------->|
-     |                               |                             |
-     |<-- signal:ice ----------------|<-- signal:ice --------------|
+     |                               |<-- signal:ice --------------|
+     |<-- signal:ice ----------------|                             |
      |                               |                             |
      |<============ P2P VIDEO CONNECTED =========================>|
 ```
+
+#### Signal Queuing Pattern
+
+Signals may arrive before the local media stream is ready (camera permission async). The Room component queues these signals and processes them once `localStream` is available:
+
+```typescript
+// In Room.tsx
+const pendingSignalsRef = useRef<Array<{ senderId: string; signal: unknown }>>([]);
+
+const handleSignal = useCallback(async (message) => {
+  if (!localStream) {
+    // Queue signal for later processing
+    pendingSignalsRef.current.push(message);
+    return;
+  }
+  await processSignal(message.signal);
+}, [localStream, processSignal]);
+
+// Process queued signals when stream becomes available
+useEffect(() => {
+  if (localStream && pendingSignalsRef.current.length > 0) {
+    const pending = [...pendingSignalsRef.current];
+    pendingSignalsRef.current = [];
+    pending.forEach(msg => processSignal(msg.signal));
+  }
+}, [localStream, processSignal]);
+```
+
+#### Signal Routing
+
+Different signal types are sent via different WebSocket message types:
+- `signal:offer` - SDP offer from initiator
+- `signal:answer` - SDP answer from responder
+- `signal:ice` - ICE candidates (both directions)
 
 ---
 
@@ -1152,10 +1242,11 @@ Client A                           Server                    Client B
 - Timer sync between clients
 
 ### Manual Testing Checklist
-- [ ] Create room, get shareable code
-- [ ] Join room with code
-- [ ] Both users see each other's video
-- [ ] Language selection persists
+- [x] Create room, get shareable code
+- [x] Join room with code
+- [x] Both users see each other's video
+- [x] Both users hear each other's audio
+- [x] Language selection persists
 - [ ] Timer counts down accurately
 - [ ] Timer syncs between both clients
 - [ ] Prep time deducts correctly
@@ -1165,36 +1256,41 @@ Client A                           Server                    Client B
 
 ## Implementation Order
 
-1. **Day 1: Foundation**
-   - [ ] Set up monorepo structure
-   - [ ] Initialize Vite + React frontend
-   - [ ] Initialize Node.js + Express backend
-   - [ ] Create shared types package
+1. **Phase 1: Foundation** ✅ COMPLETE
+   - [x] Set up monorepo structure
+   - [x] Initialize Vite + React frontend
+   - [x] Initialize Node.js + Express backend
+   - [x] Create shared types package
 
-2. **Day 2: Room System**
-   - [ ] Implement RoomManager class
-   - [ ] Build WebSocket server with ws
-   - [ ] Create room REST endpoints
-   - [ ] Build Lobby UI (create/join room)
+2. **Phase 2: Room System** ✅ COMPLETE
+   - [x] Implement RoomManager class
+   - [x] Build WebSocket server with ws
+   - [x] Create room REST endpoints
+   - [x] Build Lobby UI (create/join room)
+   - [x] Implement Zustand room store
+   - [x] Implement useWebSocket hook (with StrictMode handling)
+   - [x] Build Room component with side/language selection
+   - [x] Implement ready state sync
 
-3. **Day 3: WebRTC Video**
-   - [ ] Implement usePeer hook with simple-peer
-   - [ ] Implement useMediaStream hook
-   - [ ] Add signaling handlers to WebSocket
-   - [ ] Build VideoPanel component
-   - [ ] Test P2P video connection
+3. **Phase 3: WebRTC Video** ✅ COMPLETE
+   - [x] Implement useMediaStream hook
+   - [x] Implement usePeer hook (native RTCPeerConnection, not simple-peer)
+   - [x] Add signaling handlers to WebSocket server
+   - [x] Build VideoPanel component
+   - [x] Implement signal queuing for async stream handling
+   - [x] Implement proper signal routing (offer/answer/ice)
+   - [x] Test P2P video connection between two clients
 
-4. **Day 4: Timer + Language**
+4. **Phase 4: Timer + Debate Flow** 🔄 IN PROGRESS
    - [ ] Implement useTimer hook
    - [ ] Build Timer component
    - [ ] Add server-side timer controller
-   - [ ] Build LanguageSelector component
-   - [ ] Wire up pre-debate setup flow
+   - [ ] Implement debate start flow
+   - [ ] Implement speech transitions
 
-5. **Day 5: Integration + Polish**
+5. **Phase 5: Integration + Polish** ⏳ PENDING
    - [ ] Full flow testing
-   - [ ] Error handling
-   - [ ] Reconnection logic
+   - [ ] Error handling improvements
    - [ ] UI polish
 
 ---
@@ -1208,16 +1304,15 @@ Client A                           Server                    Client B
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.0.0",
-    "simple-peer": "^9.11.1",
     "zustand": "^5.0.0"
   },
   "devDependencies": {
-    "@types/simple-peer": "^9.11.8",
     "typescript": "^5.7.0",
     "vite": "^6.0.0",
     "tailwindcss": "^3.4.0"
   }
 }
+// Note: No simple-peer - using native RTCPeerConnection API
 
 // server/package.json
 {
@@ -1253,24 +1348,26 @@ Client A                           Server                    Client B
 
 ## Success Criteria
 
-Milestone 1 is complete when:
+Milestone 1 will be complete when:
 
-1. Two users can create/join a room via shareable code
-2. Both users see each other's live video feed
-3. Users can select speaking and listening languages
-4. Timer displays and counts down for each speech
-5. Prep time tracking works correctly
-6. Basic controls (end speech, use prep) function
-7. Works across different networks (not just localhost)
+1. ✅ Two users can create/join a room via shareable code
+2. ✅ Both users see each other's live video feed
+3. ✅ Both users hear each other's audio
+4. ✅ Users can select speaking and listening languages
+5. ⏳ Timer displays and counts down for each speech
+6. ⏳ Prep time tracking works correctly
+7. ⏳ Basic controls (end speech, use prep) function
+8. ⏳ Works across different networks (not just localhost)
 
 ---
 
 ## References
 
-- [simple-peer GitHub](https://github.com/feross/simple-peer)
+- [MDN WebRTC API](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API) - Native WebRTC documentation
+- [RTCPeerConnection](https://developer.mozilla.org/en-US/docs/Web/API/RTCPeerConnection) - Core WebRTC class we use
 - [ws library documentation](https://github.com/websockets/ws)
 - [Metered.ca Open Relay](https://www.metered.ca/tools/openrelay/)
 - [Vite Getting Started](https://vite.dev/guide/)
-- [React Timer Hook](https://www.npmjs.com/package/react-timer-hook)
 - [WebRTC + React Guide](https://www.videosdk.live/developer-hub/webrtc/webrtc-react)
-- [Socket.IO vs ws Comparison](https://dev.to/alex_aslam/nodejs-websockets-when-to-use-ws-vs-socketio-and-why-we-switched-di9)
+
+> **Note**: We originally planned to use simple-peer but switched to native RTCPeerConnection due to Node.js polyfill issues (Buffer, process, global) when bundling with Vite.

@@ -35,6 +35,7 @@ class RoomManager {
     return this.codeToRoomId.has(code) ? this.generateCode() : code;
   }
 
+  // Create room with host participant (for WebSocket flow)
   createRoom(hostId: string, hostName: string, resolution: string): Room {
     const id = uuid();
     const code = this.generateCode();
@@ -65,6 +66,30 @@ class RoomManager {
     this.codeToRoomId.set(code, id);
 
     console.log(`Room created: ${code} (${id})`);
+    return room;
+  }
+
+  // Create empty room (for REST API flow - participants join via WebSocket)
+  createEmptyRoom(resolution: string): Room {
+    const id = uuid();
+    const code = this.generateCode();
+
+    const room: Room = {
+      id,
+      code,
+      resolution,
+      status: 'waiting',
+      hostId: '', // Will be set when first participant joins
+      participants: new Map(),
+      currentSpeaker: null,
+      currentSpeech: null,
+      createdAt: Date.now(),
+    };
+
+    this.rooms.set(id, room);
+    this.codeToRoomId.set(code, id);
+
+    console.log(`Empty room created: ${code} (${id})`);
     return room;
   }
 
@@ -107,6 +132,11 @@ class RoomManager {
     };
 
     room.participants.set(participantId, participant);
+
+    // First participant becomes the host
+    if (!room.hostId || room.hostId === '') {
+      room.hostId = participantId;
+    }
     console.log(`Participant ${displayName} joined room ${room.code}`);
 
     return { success: true };

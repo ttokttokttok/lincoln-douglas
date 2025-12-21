@@ -3,6 +3,7 @@ import { Server } from 'http';
 import { v4 as uuid } from 'uuid';
 import type { WSMessage } from '@shared/types';
 import { handleMessage } from './handlers.js';
+import { roomManager } from '../rooms/manager.js';
 
 // Extended WebSocket with custom properties
 export interface ExtendedWebSocket extends WebSocket {
@@ -46,12 +47,6 @@ class SignalingServer {
       this.clients.set(client.id, client);
       console.log(`Client connected: ${client.id}`);
 
-      // Send client their ID
-      this.send(client.id, {
-        type: 'room:state',
-        payload: { clientId: client.id },
-      });
-
       // Handle pong responses
       client.on('pong', () => {
         client.isAlive = true;
@@ -84,15 +79,31 @@ class SignalingServer {
 
   private handleDisconnect(client: ExtendedWebSocket): void {
     if (client.roomId) {
-      // Notify other participants in the room
+      const roomId = client.roomId;
+
+      // Remove participant from room
+      roomManager.removeParticipant(roomId, client.id);
+
+      // Notify other participants
       this.broadcastToRoom(
-        client.roomId,
+        roomId,
         {
           type: 'participant:left',
           payload: { participantId: client.id },
         },
         client.id
       );
+
+      // Send updated room state to remaining participants
+      const room = roomManager.getRoom(roomId);
+      if (room) {
+        this.broadcastToRoom(roomId, {
+          type: 'room:state',
+          payload: { room: roomManager.serializeRoom(room) },
+        });
+      }
+
+      console.log(`Client ${client.id} disconnected from room ${roomId}`);
     }
   }
 
