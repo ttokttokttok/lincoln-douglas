@@ -5,6 +5,7 @@ import { useMediaStream } from '../hooks/useMediaStream';
 import { usePeer, type SignalData } from '../hooks/usePeer';
 import { useRoomStore } from '../stores/roomStore';
 import { VideoPanel, VideoControls } from '../components/VideoPanel';
+import { Timer } from '../components/Timer';
 import type { LanguageCode, Side } from '@shared/types';
 import { LANGUAGES } from '@shared/types';
 
@@ -68,7 +69,6 @@ export function Room() {
     isConnecting: isPeerConnecting,
     createPeer,
     signal: signalPeer,
-    destroy: destroyPeer,
   } = usePeer({
     localStream,
     onRemoteStream: handleRemoteStream,
@@ -134,6 +134,11 @@ export function Room() {
     setReady,
     setSide,
     setLanguages,
+    startDebate,
+    endSpeech,
+    startNextSpeech,
+    startPrep,
+    endPrep,
     sendSignal,
     sendAnswer,
     sendIceCandidate,
@@ -289,6 +294,39 @@ export function Room() {
           </div>
         )}
 
+        {/* Start Debate Button - Only show when room is ready */}
+        {room?.status === 'ready' && (
+          <div className="card mb-4 text-center">
+            <p className="text-green-400 mb-3">Both debaters are ready!</p>
+            <button
+              onClick={startDebate}
+              className="px-8 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg transition-colors"
+            >
+              Start Debate
+            </button>
+          </div>
+        )}
+
+        {/* Timer - Only show during debate */}
+        {room?.status === 'in_progress' && (
+          <div className="mb-4">
+            <Timer
+              onEndSpeech={endSpeech}
+              onStartPrep={startPrep}
+              onEndPrep={endPrep}
+              onStartNextSpeech={startNextSpeech}
+            />
+          </div>
+        )}
+
+        {/* Debate Complete */}
+        {room?.status === 'completed' && (
+          <div className="card mb-4 text-center">
+            <h2 className="text-2xl font-bold text-green-400 mb-2">Debate Complete!</h2>
+            <p className="text-gray-400">Thank you for participating in this debate.</p>
+          </div>
+        )}
+
         {/* Video Grid */}
         <div className="grid grid-cols-2 gap-4 mb-4">
           {/* Local Video */}
@@ -377,7 +415,8 @@ export function Room() {
           />
         </div>
 
-        {/* Participants Setup */}
+        {/* Participants Setup - Hide during debate */}
+        {room?.status !== 'in_progress' && room?.status !== 'completed' && (
         <div className="grid grid-cols-2 gap-4 mb-4">
           {/* Me */}
           <div className={`card ${myParticipant?.isReady ? 'ring-2 ring-green-500' : ''}`}>
@@ -520,6 +559,7 @@ export function Room() {
             )}
           </div>
         </div>
+        )}
 
         {/* Debug info */}
         {import.meta.env.DEV && (

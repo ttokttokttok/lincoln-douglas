@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/timer.tsx","./src/components/videopanel.tsx","./src/hooks/usemediastream.ts","./src/hooks/usepeer.ts","./src/hooks/usetimer.ts","./src/hooks/usewebsocket.ts","./src/lib/constants.ts","./src/pages/lobby.tsx","./src/pages/room.tsx","./src/stores/roomstore.ts"],"version":"5.7.3"}

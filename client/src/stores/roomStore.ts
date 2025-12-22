@@ -2,9 +2,8 @@ import { create } from 'zustand';
 import type {
   RoomState,
   Participant,
-  LanguageCode,
-  Side,
   TimerState,
+  SpeechRole,
 } from '@shared/types';
 
 interface RoomStore {
@@ -19,6 +18,7 @@ interface RoomStore {
 
   // Timer state
   timer: TimerState | null;
+  pendingNextSpeech: SpeechRole | null;
 
   // Actions
   setConnected: (connected: boolean) => void;
@@ -27,6 +27,7 @@ interface RoomStore {
   setRoom: (room: RoomState | null) => void;
   setMyParticipantId: (id: string | null) => void;
   setTimer: (timer: TimerState | null) => void;
+  setPendingNextSpeech: (speech: SpeechRole | null) => void;
   updateParticipant: (participantId: string, updates: Partial<Participant>) => void;
   reset: () => void;
 
@@ -42,6 +43,7 @@ const initialState = {
   room: null,
   myParticipantId: null,
   timer: null,
+  pendingNextSpeech: null as SpeechRole | null,
 };
 
 export const useRoomStore = create<RoomStore>((set, get) => ({
@@ -53,6 +55,7 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   setRoom: (room) => set({ room }),
   setMyParticipantId: (id) => set({ myParticipantId: id }),
   setTimer: (timer) => set({ timer }),
+  setPendingNextSpeech: (speech) => set({ pendingNextSpeech: speech }),
 
   updateParticipant: (participantId, updates) => {
     const { room } = get();

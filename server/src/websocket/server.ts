@@ -2,7 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { Server } from 'http';
 import { v4 as uuid } from 'uuid';
 import type { WSMessage } from '@shared/types';
-import { handleMessage } from './handlers.js';
+import { handleMessage, initializeDebateCallbacks } from './handlers.js';
 import { roomManager } from '../rooms/manager.js';
 
 // Extended WebSocket with custom properties
@@ -20,6 +20,7 @@ class SignalingServer {
     this.wss = new WebSocketServer({ server, path: '/ws' });
     this.setupHeartbeat();
     this.setupConnectionHandler();
+    initializeDebateCallbacks(this);
     console.log('WebSocket server initialized');
   }
 

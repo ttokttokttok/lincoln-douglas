@@ -43,6 +43,8 @@ export interface TimerState {
   };
   isRunning: boolean;
   currentSpeech: SpeechRole | null;
+  isPrepTime: boolean;
+  prepSide: Side | null;
 }
 
 // WebSocket message types

@@ -49,13 +49,15 @@ Start with high-quality STT/TTS language pairs:
 ### Round Format (Simplified for MVP)
 Keep timing tight for demo purposes:
 
-**"Quick LD" format:**
+**"Quick LD" format (MVP - No Cross-Examination):**
 - **AC (Affirmative Constructive)**: 3:00
 - **NC (Negative Constructive)**: 4:00
 - **1AR (First Affirmative Rebuttal)**: 2:00
 - **NR (Negative Rebuttal)**: 3:00
 - **2AR (Second Affirmative Rebuttal)**: 2:00
 - **Prep time**: 2:00 per side
+
+> **Note:** Cross-examination periods are excluded from this MVP to simplify the real-time translation pipeline. CX involves rapid back-and-forth exchanges that would significantly increase latency complexity. This can be added in a future version.
 
 Or offer **"Micro Debate"** for quick demos:
 - Two speeches per side, 2:00 each
@@ -428,16 +430,21 @@ GET    /api/rooms/:roomId/recording  Get recording with all audio tracks
 
 ## Implementation Roadmap
 
-### Milestone 1 — Room + Video Infrastructure
-- [ ] Room creation/joining flow
-- [ ] WebRTC video connection between two participants
-- [ ] Basic timer system
-- [ ] Language selection UI
+### Milestone 1 — Room + Video Infrastructure ✅ COMPLETE
+- [x] Room creation/joining flow
+- [x] WebRTC video connection between two participants
+- [x] Basic timer system (server-authoritative, all 5 speeches + prep time)
+- [x] Language selection UI
+- [x] Debate flow (AC → NC → 1AR → NR → 2AR, no CX)
+- [x] Permission controls (only speaker can end speech, only next speaker can start)
 
-### Milestone 2 — Real-Time Translation Pipeline
+### Milestone 2 — Real-Time Translation + Flow Sheet
 - [ ] Google STT streaming integration (multi-language)
 - [ ] Gemini translation with debate context
 - [ ] Dual transcript display (original + translated)
+- [ ] Argument extraction (CWI) from translated transcripts
+- [ ] Unified flow view (language-agnostic debate sheet)
+- [ ] Ballot generation at debate end
 - [ ] Latency measurement and display
 
 ### Milestone 3 — ElevenLabs Voice Synthesis
@@ -446,47 +453,10 @@ GET    /api/rooms/:roomId/recording  Get recording with all audio tracks
 - [ ] Audio playback synchronization
 - [ ] (Stretch) Voice cloning from sample
 
-### Milestone 4 — Emotion Preservation
+### Milestone 4 — Emotion Preservation + Polish
 - [ ] Emotion detection from source audio/text
 - [ ] Emotion → TTS parameter mapping
 - [ ] A/B comparison: with/without emotion preservation
-
-### Milestone 5 — Flow + Judging
-- [ ] Argument extraction (CWI) from translated transcripts
-- [ ] Unified flow view (language-agnostic)
-- [ ] Ballot generation
-- [ ] Speaker points with "translation quality" dimension
-
----
-
-## Demo Script (Hackathon Presentation)
-
-1. **Setup** (30 sec): Two presenters join, one selects Korean, one English
-2. **Voice clone** (30 sec): Quick voice sample from each
-3. **Debate start** (2 min): 
-   - English speaker gives AC
-   - Korean speaker hears it in Korean with similar voice/emotion
-4. **Response** (2 min):
-   - Korean speaker responds with NC
-   - English speaker hears passionate Korean argument in English
-5. **Highlight moment**: Show side-by-side original vs. translated with emotion preserved
-6. **Ballot** (30 sec): Show bilingual judgment
-
-**Key demo talking points:**
-- "Same passion, different language"
-- Latency numbers (show ~1.5 second delay)
-- Emotion preservation comparison
-- "Debate is now borderless"
-
----
-
-## Open Questions
-
-1. **Voice cloning legality**: Need consent flow, temporary storage only?
-2. **Latency tolerance**: Is 1.5s acceptable? Need user testing
-3. **Emotion accuracy**: How good is detection? Need calibration
-4. **Language pairs**: Which pairs have best STT + TTS quality?
-5. **Fallback UX**: What if translation fails mid-speech?
 
 ---
 

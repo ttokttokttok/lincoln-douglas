@@ -1,7 +1,14 @@
-import type { SpeechRole } from './types';
+import type { SpeechRole } from './types.js';
+
+// ICE server configuration interface (browser-compatible)
+interface IceServer {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
 
 // ICE servers for NAT traversal
-export const ICE_SERVERS: RTCIceServer[] = [
+export const ICE_SERVERS: IceServer[] = [
   // Google STUN servers (free, reliable)
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },

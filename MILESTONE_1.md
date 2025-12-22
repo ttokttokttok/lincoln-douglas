@@ -1,6 +1,6 @@
 # Milestone 1 — Room + Video Infrastructure Implementation Plan
 
-## Status: IN PROGRESS (Phase 4 of 5)
+## Status: COMPLETE ✅
 
 ## Overview
 
@@ -10,10 +10,8 @@ This document details the implementation strategy for Milestone 1 of the Cross-L
 
 ## Current State
 
-- **Status**: Room + Video complete, Timer system pending
-- **Completed**: Room system, WebSocket, WebRTC P2P video/audio
-- **In Progress**: Timer system, debate flow
-- **Pending**: Speech transitions, integration polish
+- **Status**: Milestone 1 Complete
+- **Completed**: Room system, WebSocket, WebRTC P2P video/audio, Timer system, Debate flow
 
 ### What's Working Now
 - ✅ Create room via REST API, get 6-char code
@@ -29,12 +27,18 @@ This document details the implementation strategy for Milestone 1 of the Cross-L
 - ✅ Video display (VideoPanel component)
 - ✅ Signal queuing for async stream handling
 - ✅ P2P video/audio connection between two clients
+- ✅ Timer countdown with server-authoritative state
+- ✅ Timer display (Timer component)
+- ✅ Debate start flow (when both ready)
+- ✅ Speech transitions (AC → NC → 1AR → NR → 2AR)
+- ✅ Prep time tracking per side
+- ✅ Only current speaker can end their speech
+- ✅ Only next speaker can start their speech or use prep time
 
-### What's Not Yet Implemented
-- ❌ Timer countdown (useTimer hook)
-- ❌ Timer display (Timer component)
-- ❌ Debate start flow (when both ready)
-- ❌ Speech transitions
+### MVP Format Notes
+- **No cross-examination** - This MVP uses simplified LD format without CX periods
+- Speech order: AC (3:00) → NC (4:00) → 1AR (2:00) → NR (3:00) → 2AR (2:00)
+- Prep time: 2:00 per side
 
 ---
 
@@ -1247,10 +1251,12 @@ Different signal types are sent via different WebSocket message types:
 - [x] Both users see each other's video
 - [x] Both users hear each other's audio
 - [x] Language selection persists
-- [ ] Timer counts down accurately
-- [ ] Timer syncs between both clients
-- [ ] Prep time deducts correctly
-- [ ] Speech transitions work
+- [x] Timer counts down accurately
+- [x] Timer syncs between both clients
+- [x] Prep time deducts correctly
+- [x] Speech transitions work (AC → NC → 1AR → NR → 2AR)
+- [x] Only current speaker can end their speech
+- [x] Only next speaker can use prep time or start speech
 
 ---
 
@@ -1281,17 +1287,19 @@ Different signal types are sent via different WebSocket message types:
    - [x] Implement proper signal routing (offer/answer/ice)
    - [x] Test P2P video connection between two clients
 
-4. **Phase 4: Timer + Debate Flow** 🔄 IN PROGRESS
-   - [ ] Implement useTimer hook
-   - [ ] Build Timer component
-   - [ ] Add server-side timer controller
-   - [ ] Implement debate start flow
-   - [ ] Implement speech transitions
+4. **Phase 4: Timer + Debate Flow** ✅ COMPLETE
+   - [x] Implement useTimer hook
+   - [x] Build Timer component
+   - [x] Add server-side timer controller (TimerController + DebateManager)
+   - [x] Implement debate start flow
+   - [x] Implement speech transitions (AC → NC → 1AR → NR → 2AR)
+   - [x] Implement prep time tracking per side
+   - [x] Add permission controls (only speaker can end speech, only next speaker can start)
 
-5. **Phase 5: Integration + Polish** ⏳ PENDING
-   - [ ] Full flow testing
-   - [ ] Error handling improvements
-   - [ ] UI polish
+5. **Phase 5: Integration + Polish** ✅ COMPLETE
+   - [x] Full flow testing
+   - [x] Error handling improvements
+   - [x] UI polish
 
 ---
 
@@ -1348,16 +1356,17 @@ Different signal types are sent via different WebSocket message types:
 
 ## Success Criteria
 
-Milestone 1 will be complete when:
+Milestone 1 is complete! ✅
 
 1. ✅ Two users can create/join a room via shareable code
 2. ✅ Both users see each other's live video feed
 3. ✅ Both users hear each other's audio
 4. ✅ Users can select speaking and listening languages
-5. ⏳ Timer displays and counts down for each speech
-6. ⏳ Prep time tracking works correctly
-7. ⏳ Basic controls (end speech, use prep) function
-8. ⏳ Works across different networks (not just localhost)
+5. ✅ Timer displays and counts down for each speech
+6. ✅ Prep time tracking works correctly
+7. ✅ Basic controls (end speech, use prep) function
+8. ✅ Works across different networks (STUN/TURN configured)
+9. ✅ Permission controls prevent unauthorized actions
 
 ---
 

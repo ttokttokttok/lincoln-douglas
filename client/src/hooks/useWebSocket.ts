@@ -4,9 +4,11 @@ import type {
   WSMessage,
   WSMessageType,
   RoomStatePayload,
-  ParticipantUpdatePayload,
   TimerUpdatePayload,
   ErrorPayload,
+  SpeechStartPayload,
+  SpeechRole,
+  Side,
 } from '@shared/types';
 
 const WS_URL = 'ws://localhost:3001/ws';
@@ -39,7 +41,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     setRoom,
     setMyParticipantId,
     setTimer,
-    updateParticipant,
+    setPendingNextSpeech,
     reset,
   } = useRoomStore();
 
@@ -93,13 +95,29 @@ export function useWebSocket(options: UseWebSocketOptions) {
           break;
         }
 
+        case 'speech:start': {
+          const payload = message.payload as SpeechStartPayload;
+          console.log('[WS] Speech started:', payload.speech, 'by', payload.speakerId);
+          // Clear pending next speech when a new speech starts
+          setPendingNextSpeech(null);
+          break;
+        }
+
+        case 'speech:end': {
+          const payload = message.payload as { speech: string; nextSpeech: SpeechRole | null };
+          console.log('[WS] Speech ended:', payload.speech, 'next:', payload.nextSpeech);
+          // Store the next speech so Timer component knows what's coming
+          setPendingNextSpeech(payload.nextSpeech);
+          break;
+        }
+
         default:
           console.log('[WS] Unhandled message type:', message.type);
       }
     } catch (error) {
       console.error('[WS] Failed to parse message:', error);
     }
-  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, onSignal]);
+  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal]);
 
   // Send a message
   const send = useCallback((type: WSMessageType, payload: unknown) => {
@@ -227,6 +245,31 @@ export function useWebSocket(options: UseWebSocketOptions) {
     send('room:start', {});
   }, [send]);
 
+  // Timer/Speech control
+  const endSpeech = useCallback(() => {
+    send('speech:end', {});
+  }, [send]);
+
+  const startNextSpeech = useCallback(() => {
+    send('speech:start', {});
+  }, [send]);
+
+  const pauseTimer = useCallback(() => {
+    send('timer:pause', {});
+  }, [send]);
+
+  const resumeTimer = useCallback(() => {
+    send('timer:start', {});
+  }, [send]);
+
+  const startPrep = useCallback((side: Side) => {
+    send('prep:start', { side });
+  }, [send]);
+
+  const endPrep = useCallback(() => {
+    send('prep:end', {});
+  }, [send]);
+
   // Signaling for WebRTC
   const sendSignal = useCallback((targetId: string, signal: unknown) => {
     send('signal:offer', { targetId, signal });
@@ -248,6 +291,12 @@ export function useWebSocket(options: UseWebSocketOptions) {
     setSide,
     setLanguages,
     startDebate,
+    endSpeech,
+    startNextSpeech,
+    pauseTimer,
+    resumeTimer,
+    startPrep,
+    endPrep,
     sendSignal,
     sendAnswer,
     sendIceCandidate,

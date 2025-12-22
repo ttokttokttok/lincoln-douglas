@@ -2,11 +2,81 @@ import type {
   WSMessage,
   RoomCreatePayload,
   RoomJoinPayload,
-  ParticipantUpdatePayload,
   SignalPayload,
+  Side,
+  SpeechRole,
+  TimerState,
 } from '@shared/types';
+import { SPEECH_ORDER, SPEECH_SIDES } from '@shared/types';
 import { roomManager } from '../rooms/manager.js';
+import { debateManager } from '../timer/debateController.js';
 import type { ExtendedWebSocket, SignalingServer } from './server.js';
+
+// Store server reference for callbacks
+let serverRef: SignalingServer | null = null;
+
+// Initialize debate callbacks
+export function initializeDebateCallbacks(server: SignalingServer): void {
+  serverRef = server;
+
+  debateManager.setCallbacks({
+    onTimerUpdate: (roomId: string, timer: TimerState) => {
+      server.broadcastToRoomAll(roomId, {
+        type: 'timer:update',
+        payload: { timer },
+      });
+    },
+    onSpeechStart: (roomId: string, speech: SpeechRole, speakerId: string) => {
+      // Update room state
+      const room = roomManager.getRoom(roomId);
+      if (room) {
+        room.currentSpeech = speech;
+        room.currentSpeaker = speakerId;
+      }
+
+      server.broadcastToRoomAll(roomId, {
+        type: 'speech:start',
+        payload: { speech, speakerId },
+      });
+
+      // Also send updated room state
+      if (room) {
+        server.broadcastToRoomAll(roomId, {
+          type: 'room:state',
+          payload: { room: roomManager.serializeRoom(room) },
+        });
+      }
+    },
+    onSpeechEnd: (roomId: string, speech: SpeechRole, nextSpeech: SpeechRole | null) => {
+      server.broadcastToRoomAll(roomId, {
+        type: 'speech:end',
+        payload: { speech, nextSpeech },
+      });
+    },
+    onDebateStart: (roomId: string) => {
+      const room = roomManager.getRoom(roomId);
+      if (room) {
+        server.broadcastToRoomAll(roomId, {
+          type: 'room:state',
+          payload: { room: roomManager.serializeRoom(room) },
+        });
+      }
+      console.log(`Debate started in room ${roomId}`);
+    },
+    onDebateEnd: (roomId: string) => {
+      const room = roomManager.getRoom(roomId);
+      if (room) {
+        room.currentSpeech = null;
+        room.currentSpeaker = null;
+        server.broadcastToRoomAll(roomId, {
+          type: 'room:state',
+          payload: { room: roomManager.serializeRoom(room) },
+        });
+      }
+      console.log(`Debate ended in room ${roomId}`);
+    },
+  });
+}
 
 export function handleMessage(
   client: ExtendedWebSocket,
@@ -32,14 +102,43 @@ export function handleMessage(
       handleRoomReady(client, message.payload as { isReady: boolean }, server);
       break;
 
+    case 'room:start':
+      handleRoomStart(client, server);
+      break;
+
     case 'participant:update':
-      handleParticipantUpdate(client, message.payload as ParticipantUpdatePayload, server);
+      handleParticipantUpdate(client, message.payload as Record<string, unknown>, server);
       break;
 
     case 'signal:offer':
     case 'signal:answer':
     case 'signal:ice':
       handleSignaling(client, message, server);
+      break;
+
+    // Timer/Speech control messages
+    case 'timer:pause':
+      handleTimerPause(client, server);
+      break;
+
+    case 'timer:start':
+      handleTimerResume(client, server);
+      break;
+
+    case 'speech:end':
+      handleSpeechEnd(client, server);
+      break;
+
+    case 'speech:start':
+      handleSpeechStart(client, server);
+      break;
+
+    case 'prep:start':
+      handlePrepStart(client, message.payload as { side: Side }, server);
+      break;
+
+    case 'prep:end':
+      handlePrepEnd(client, server);
       break;
 
     default:
@@ -191,7 +290,7 @@ function handleRoomReady(
 
 function handleParticipantUpdate(
   client: ExtendedWebSocket,
-  payload: Partial<ParticipantUpdatePayload> & Record<string, unknown>,
+  payload: Record<string, unknown>,
   server: SignalingServer
 ): void {
   if (!client.roomId) {
@@ -250,4 +349,155 @@ function handleSignaling(
       },
     });
   }
+}
+
+// Start the debate when both participants are ready
+function handleRoomStart(client: ExtendedWebSocket, server: SignalingServer): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  const room = roomManager.getRoom(client.roomId);
+  if (!room) {
+    server.sendError(client.id, 'Room not found');
+    return;
+  }
+
+  // Verify room is ready to start
+  if (room.status !== 'ready') {
+    server.sendError(client.id, 'Room is not ready to start');
+    return;
+  }
+
+  // Start the debate
+  const success = debateManager.startDebate(client.roomId);
+  if (!success) {
+    server.sendError(client.id, 'Failed to start debate');
+  }
+}
+
+// Pause the timer
+function handleTimerPause(client: ExtendedWebSocket, server: SignalingServer): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  debateManager.pauseTimer(client.roomId);
+}
+
+// Resume the timer
+function handleTimerResume(client: ExtendedWebSocket, server: SignalingServer): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  debateManager.resumeTimer(client.roomId);
+}
+
+// End current speech early
+function handleSpeechEnd(client: ExtendedWebSocket, server: SignalingServer): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  // Verify the client is the current speaker
+  const debateState = debateManager.getDebateState(client.roomId);
+  if (!debateState || debateState.currentSpeaker !== client.id) {
+    server.sendError(client.id, 'Only the current speaker can end the speech');
+    return;
+  }
+
+  debateManager.endSpeech(client.roomId);
+}
+
+// Start the next speech (after prep time or transition)
+function handleSpeechStart(client: ExtendedWebSocket, server: SignalingServer): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  // Verify the client is on the side that speaks next
+  const room = roomManager.getRoom(client.roomId);
+  const participant = room?.participants.get(client.id);
+  const timerState = debateManager.getTimerState(client.roomId);
+
+  if (!participant || !timerState) {
+    server.sendError(client.id, 'Cannot start next speech');
+    return;
+  }
+
+  // Get the next speech and check if this participant's side should speak
+  const debateState = debateManager.getDebateState(client.roomId);
+  if (debateState) {
+    const speechIndex = debateManager.getCurrentSpeechIndex(client.roomId);
+    if (speechIndex !== null && speechIndex < SPEECH_ORDER.length) {
+      const nextSpeech = SPEECH_ORDER[speechIndex];
+      const nextSpeakerSide = SPEECH_SIDES[nextSpeech];
+      if (participant.side !== nextSpeakerSide) {
+        server.sendError(client.id, 'Only the next speaker can start their speech');
+        return;
+      }
+    }
+  }
+
+  const success = debateManager.startNextSpeech(client.roomId);
+  if (!success) {
+    server.sendError(client.id, 'Cannot start next speech');
+  }
+}
+
+// Start prep time for a side
+function handlePrepStart(
+  client: ExtendedWebSocket,
+  payload: { side: Side },
+  server: SignalingServer
+): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  // Verify the client is on the side they're trying to use prep for
+  const room = roomManager.getRoom(client.roomId);
+  const participant = room?.participants.get(client.id);
+
+  if (!participant || participant.side !== payload.side) {
+    server.sendError(client.id, 'You can only use your own prep time');
+    return;
+  }
+
+  const success = debateManager.startPrep(client.roomId, payload.side);
+  if (!success) {
+    server.sendError(client.id, 'Cannot start prep time');
+  }
+}
+
+// End prep time
+function handlePrepEnd(client: ExtendedWebSocket, server: SignalingServer): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  // Verify the client is on the side whose prep is running
+  const timerState = debateManager.getTimerState(client.roomId);
+  const room = roomManager.getRoom(client.roomId);
+  const participant = room?.participants.get(client.id);
+
+  if (!timerState?.isPrepTime || !timerState.prepSide) {
+    server.sendError(client.id, 'No prep time is running');
+    return;
+  }
+
+  if (!participant || participant.side !== timerState.prepSide) {
+    server.sendError(client.id, 'You can only end your own prep time');
+    return;
+  }
+
+  debateManager.endPrep(client.roomId);
 }
