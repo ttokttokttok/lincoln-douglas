@@ -133,14 +133,18 @@ export function useAudioPlayback(
 
   /**
    * Handle TTS end message
+   * This triggers playback of accumulated audio chunks
    */
-  const handleTTSEnd = useCallback((speakerId: string, _speechId: string) => {
+  const handleTTSEnd = useCallback(async (speakerId: string, _speechId: string) => {
     if (!enabled) return;
 
     activeSpeakersRef.current.delete(speakerId);
-    console.log(`[useAudioPlayback] TTS ended for ${speakerId}`);
+    console.log(`[useAudioPlayback] TTS stream ended for ${speakerId}, triggering playback`);
 
-    // Check playback state after a delay to allow queue to drain
+    // Trigger playback of accumulated audio
+    await audioPlaybackManager.finishAccumulation(speakerId);
+
+    // Check playback state after a delay to allow playback to complete
     const checkPlaybackEnd = () => {
       const playbackState = audioPlaybackManager.getState(speakerId);
 

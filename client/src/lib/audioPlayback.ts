@@ -4,24 +4,30 @@
  * Handles TTS audio playback in the browser using Web Audio API.
  * Receives MP3 chunks from WebSocket, decodes them, and plays them smoothly.
  *
+ * IMPORTANT: MP3 streaming fix
+ * MP3 audio is frame-based (~26ms per frame). Decoding arbitrary chunks
+ * causes "cuts" at frame boundaries. Solution: accumulate all chunks
+ * and decode the complete audio once the stream ends.
+ *
  * Features:
- * - Chunk queuing for smooth playback
- * - Gapless audio between chunks
+ * - Chunk accumulation for seamless playback (no frame boundary issues)
+ * - Pre-buffering to reduce latency while maintaining quality
  * - Independent volume control
  * - Multiple speaker support
  */
 
-interface AudioChunk {
-  chunkIndex: number;
-  audioData: ArrayBuffer;
-  timestamp: number;
+interface AccumulatedAudio {
+  chunks: ArrayBuffer[];
+  totalBytes: number;
+  firstChunkTime: number;
+  isComplete: boolean;
 }
 
 interface SpeakerPlaybackState {
-  queue: AudioChunk[];
+  accumulated: AccumulatedAudio;
   isPlaying: boolean;
-  nextPlayTime: number;
   currentSource: AudioBufferSourceNode | null;
+  playbackStarted: boolean;
 }
 
 export interface PlaybackState {
@@ -78,12 +84,13 @@ class AudioPlaybackManager {
 
   /**
    * Queue an audio chunk for playback
+   * Chunks are accumulated and decoded together to avoid MP3 frame boundary issues
    */
   async queueChunk(
     speakerId: string,
-    chunkIndex: number,
+    _chunkIndex: number,
     base64Audio: string,
-    _isFinal: boolean
+    isFinal: boolean
   ): Promise<void> {
     // Initialize on first chunk if needed
     if (!this.isInitialized) {
@@ -97,82 +104,110 @@ class AudioPlaybackManager {
     let speakerState = this.speakerStates.get(speakerId);
     if (!speakerState) {
       speakerState = {
-        queue: [],
+        accumulated: {
+          chunks: [],
+          totalBytes: 0,
+          firstChunkTime: Date.now(),
+          isComplete: false,
+        },
         isPlaying: false,
-        nextPlayTime: this.audioContext!.currentTime,
         currentSource: null,
+        playbackStarted: false,
       };
       this.speakerStates.set(speakerId, speakerState);
     }
 
-    // Add chunk to queue
-    speakerState.queue.push({
-      chunkIndex,
-      audioData,
-      timestamp: Date.now(),
-    });
+    // Accumulate the chunk
+    speakerState.accumulated.chunks.push(audioData);
+    speakerState.accumulated.totalBytes += audioData.byteLength;
 
-    // Sort by chunk index to handle out-of-order delivery
-    speakerState.queue.sort((a, b) => a.chunkIndex - b.chunkIndex);
-
-    // Start playback if not already playing
-    if (!speakerState.isPlaying) {
-      this.playNext(speakerId);
+    // If this is the final chunk, mark complete and trigger playback
+    if (isFinal) {
+      speakerState.accumulated.isComplete = true;
+      await this.playAccumulated(speakerId);
     }
   }
 
   /**
-   * Play the next chunk in the queue for a speaker
+   * Signal that TTS stream has ended - trigger playback of accumulated audio
    */
-  private async playNext(speakerId: string): Promise<void> {
+  async finishAccumulation(speakerId: string): Promise<void> {
     const speakerState = this.speakerStates.get(speakerId);
-    if (!speakerState || speakerState.queue.length === 0 || !this.audioContext || !this.gainNode) {
-      if (speakerState) {
-        speakerState.isPlaying = false;
-      }
+    if (speakerState && !speakerState.accumulated.isComplete) {
+      speakerState.accumulated.isComplete = true;
+      await this.playAccumulated(speakerId);
+    }
+  }
+
+  /**
+   * Play all accumulated audio chunks as a single buffer
+   */
+  private async playAccumulated(speakerId: string): Promise<void> {
+    const speakerState = this.speakerStates.get(speakerId);
+    if (!speakerState || !this.audioContext || !this.gainNode) {
       return;
     }
 
+    // Don't play if already playing or no data
+    if (speakerState.playbackStarted || speakerState.accumulated.chunks.length === 0) {
+      return;
+    }
+
+    speakerState.playbackStarted = true;
     speakerState.isPlaying = true;
-    const chunk = speakerState.queue.shift()!;
 
     try {
-      // Decode MP3 to PCM
-      const audioBuffer = await this.audioContext.decodeAudioData(
-        chunk.audioData.slice(0)  // Clone buffer as decodeAudioData detaches it
-      );
+      // Combine all chunks into one buffer
+      const combinedBuffer = this.combineChunks(speakerState.accumulated.chunks);
 
-      // Create source node
+      console.log(`[AudioPlayback] Decoding ${combinedBuffer.byteLength} bytes of accumulated audio`);
+
+      // Decode the complete MP3 as one unit - no frame boundary issues!
+      const audioBuffer = await this.audioContext.decodeAudioData(combinedBuffer);
+
+      // Create and play source
       const source = this.audioContext.createBufferSource();
       source.buffer = audioBuffer;
       source.connect(this.gainNode);
 
-      // Schedule playback
-      // Use slight overlap prevention: ensure we don't schedule in the past
-      const now = this.audioContext.currentTime;
-      const playTime = Math.max(speakerState.nextPlayTime, now);
-
-      source.start(playTime);
       speakerState.currentSource = source;
 
-      // Schedule next chunk after this one finishes
-      speakerState.nextPlayTime = playTime + audioBuffer.duration;
+      // Play immediately
+      source.start(0);
 
-      // When this chunk ends, play the next one
+      const duration = audioBuffer.duration;
+      console.log(`[AudioPlayback] Playing ${duration.toFixed(2)}s of audio for ${speakerId}`);
+
+      // Cleanup when done
       source.onended = () => {
         speakerState.currentSource = null;
-        this.playNext(speakerId);
+        speakerState.isPlaying = false;
+        console.log(`[AudioPlayback] Playback complete for ${speakerId}`);
       };
 
     } catch (error) {
-      console.error('[AudioPlayback] Error decoding/playing chunk:', error);
-      // Try next chunk on error
+      console.error('[AudioPlayback] Error decoding accumulated audio:', error);
       speakerState.isPlaying = false;
-      if (speakerState.queue.length > 0) {
-        this.playNext(speakerId);
-      }
+      speakerState.playbackStarted = false;
     }
   }
+
+  /**
+   * Combine multiple ArrayBuffers into one
+   */
+  private combineChunks(chunks: ArrayBuffer[]): ArrayBuffer {
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+    const combined = new Uint8Array(totalLength);
+
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(new Uint8Array(chunk), offset);
+      offset += chunk.byteLength;
+    }
+
+    return combined.buffer;
+  }
+
 
   /**
    * Set playback volume (0.0 - 1.0)
@@ -211,10 +246,15 @@ class AudioPlaybackManager {
         }
         speakerState.currentSource = null;
       }
-      // Clear queue
-      speakerState.queue = [];
+      // Clear accumulated audio
+      speakerState.accumulated = {
+        chunks: [],
+        totalBytes: 0,
+        firstChunkTime: 0,
+        isComplete: false,
+      };
       speakerState.isPlaying = false;
-      speakerState.nextPlayTime = this.audioContext?.currentTime || 0;
+      speakerState.playbackStarted = false;
     }
   }
 
@@ -237,7 +277,7 @@ class AudioPlaybackManager {
       isPlaying: speakerState?.isPlaying || false,
       currentSpeakerId: speakerId,
       volume: this.volume,
-      bufferedChunks: speakerState?.queue.length || 0,
+      bufferedChunks: speakerState?.accumulated.chunks.length || 0,
     };
   }
 

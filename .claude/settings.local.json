@@ -5,7 +5,9 @@
       "WebFetch(domain:elevenlabs.io)",
       "WebFetch(domain:help.elevenlabs.io)",
       "Bash(cat:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npm run build:all:*)",
+      "Bash(npm run)"
     ]
   }
 }

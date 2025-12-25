@@ -201,22 +201,38 @@ export function Room() {
   });
 
   // TTS event handlers
+  // IMPORTANT: Don't play TTS when it's my turn to speak - prevents audio overlap
+  const amICurrentSpeaker = room?.currentSpeaker === myParticipantId && room?.status === 'in_progress';
+
   const handleTTSStart = useCallback((message: TTSStartMessage) => {
+    // Don't start TTS playback if I'm currently speaking
+    if (amICurrentSpeaker) {
+      console.log('[Room] Ignoring TTS start - I am currently speaking');
+      return;
+    }
     handleTTSStartPlayback(message.speakerId, message.speechId);
-  }, [handleTTSStartPlayback]);
+  }, [handleTTSStartPlayback, amICurrentSpeaker]);
 
   const handleTTSChunk = useCallback((message: TTSChunkMessage) => {
+    // Don't queue TTS audio if I'm currently speaking
+    if (amICurrentSpeaker) {
+      return;
+    }
     handleTTSAudioChunk(
       message.speakerId,
       message.chunkIndex,
       message.audioData,
       message.isFinal
     );
-  }, [handleTTSAudioChunk]);
+  }, [handleTTSAudioChunk, amICurrentSpeaker]);
 
   const handleTTSEnd = useCallback((message: TTSEndMessage) => {
+    // Don't process TTS end if I'm currently speaking
+    if (amICurrentSpeaker) {
+      return;
+    }
     handleTTSEndPlayback(message.speakerId, message.speechId);
-  }, [handleTTSEndPlayback]);
+  }, [handleTTSEndPlayback, amICurrentSpeaker]);
 
   // Initialize TTS on first user interaction (for AudioContext)
   useEffect(() => {

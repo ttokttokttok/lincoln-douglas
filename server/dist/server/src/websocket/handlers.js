@@ -114,6 +114,13 @@ export function initializeDebateCallbacks(server) {
             }
         },
         onSpeechEnd: async (roomId, speech, nextSpeech) => {
+            const room = roomManager.getRoom(roomId);
+            // Clear any pending TTS from the speaker who just finished
+            // This prevents accumulated TTS from playing during the next speaker's turn
+            if (room?.currentSpeaker) {
+                ttsSessionManager.clearQueue(room.currentSpeaker);
+                console.log(`[TTS] Cleared queue for ${room.currentSpeaker} on speech end`);
+            }
             server.broadcastToRoomAll(roomId, {
                 type: 'speech:end',
                 payload: { speech, nextSpeech },
@@ -631,8 +638,12 @@ function generateTTSForListeners(roomId, speakerId, speechId, translatedText, ta
     if (!room)
         return;
     // Find listeners who need this translation (those whose listeningLanguage matches targetLanguage)
+    // IMPORTANT: Exclude the current speaker - they shouldn't hear TTS while it's their turn
     const listeners = Array.from(room.participants.values())
-        .filter(p => p.id !== speakerId && p.listeningLanguage === targetLanguage);
+        .filter(p => p.id !== speakerId && // Not the person speaking this text
+        p.id !== room.currentSpeaker && // Not the person whose turn it is to speak
+        p.listeningLanguage === targetLanguage // Wants to hear in this language
+    );
     if (listeners.length === 0) {
         return;
     }
