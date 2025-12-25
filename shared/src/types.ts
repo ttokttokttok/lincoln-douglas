@@ -225,6 +225,7 @@ export interface TranslationCompletePayload {
   translatedText: string;
   targetLanguage: LanguageCode;
   latencyMs: number;
+  emotion?: EmotionMarkers;  // Milestone 4: Detected emotion for TTS modulation
 }
 
 // Latency update payload

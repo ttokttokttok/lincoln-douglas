@@ -121,6 +121,7 @@ export interface TranslationCompletePayload {
     translatedText: string;
     targetLanguage: LanguageCode;
     latencyMs: number;
+    emotion?: EmotionMarkers;
 }
 export interface LatencyUpdatePayload {
     sttLatencyMs: number;

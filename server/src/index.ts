@@ -9,6 +9,7 @@ import { translationService } from './translation/geminiTranslation.js';
 import { argumentExtractor } from './flow/argumentExtractor.js';
 import { ballotGenerator } from './flow/ballotGenerator.js';
 import { elevenLabsTTS } from './tts/elevenLabsTts.js';
+import { emotionDetector } from './emotion/emotionDetector.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -35,7 +36,10 @@ const ballotReady = ballotGenerator.initialize();
 // Initialize ElevenLabs TTS service
 const ttsReady = elevenLabsTTS.initialize();
 
-console.log(`[Services] STT: ${sttReady ? '✓' : '✗'}, Translation: ${translationReady ? '✓' : '✗'}, Extractor: ${extractorReady ? '✓' : '✗'}, Ballot: ${ballotReady ? '✓' : '✗'}, TTS: ${ttsReady ? '✓' : '✗'}`);
+// Initialize Emotion Detection service (Milestone 4)
+const emotionReady = emotionDetector.initialize();
+
+console.log(`[Services] STT: ${sttReady ? '✓' : '✗'}, Translation: ${translationReady ? '✓' : '✗'}, Extractor: ${extractorReady ? '✓' : '✗'}, Ballot: ${ballotReady ? '✓' : '✗'}, TTS: ${ttsReady ? '✓' : '✗'}, Emotion: ${emotionReady ? '✓' : '✗'}`);
 if (!sttReady) {
   console.log('[Services] Set GEMINI_API_KEY to enable all Gemini services');
 }

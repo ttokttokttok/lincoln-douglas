@@ -21,6 +21,7 @@ import type {
   VoiceConfig,
   TimeoutWarningPayload,
   TimeoutEndPayload,
+  EmotionMarkers,
 } from '@shared/types';
 
 const WS_URL = 'ws://localhost:3001/ws';
@@ -51,6 +52,7 @@ export interface TranslationMessage {
   translatedText: string;
   targetLanguage: LanguageCode;
   latencyMs: number;
+  emotion?: EmotionMarkers;  // Milestone 4: Detected emotion for voice modulation
 }
 
 // TTS message types for callbacks
@@ -203,7 +205,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
         case 'translation:complete': {
           const payload = message.payload as TranslationCompletePayload;
-          console.log('[WS] Translation:', payload.translatedText.substring(0, 50) + (payload.translatedText.length > 50 ? '...' : ''));
+          const emotionLabel = payload.emotion ? ` [${payload.emotion.dominantEmotion}]` : '';
+          console.log('[WS] Translation' + emotionLabel + ':', payload.translatedText.substring(0, 50) + (payload.translatedText.length > 50 ? '...' : ''));
           onTranslation?.({
             speakerId: payload.speakerId,
             speakerName: payload.speakerName,
@@ -212,6 +215,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
             translatedText: payload.translatedText,
             targetLanguage: payload.targetLanguage,
             latencyMs: payload.latencyMs,
+            emotion: payload.emotion,  // Milestone 4: Pass emotion to store
           });
           break;
         }

@@ -13,6 +13,7 @@ import type {
   VoiceSelectPayload,
   VoiceListRequestPayload,
   TimeoutReason,
+  EmotionMarkers,
 } from '@shared/types';
 import { SPEECH_ORDER, SPEECH_SIDES } from '@shared/types';
 import { roomManager } from '../rooms/manager.js';
@@ -25,6 +26,7 @@ import { argumentExtractor } from '../flow/argumentExtractor.js';
 import { ballotGenerator } from '../flow/ballotGenerator.js';
 import { elevenLabsTTS } from '../tts/elevenLabsTts.js';
 import { ttsSessionManager } from '../tts/sessionManager.js';
+import { emotionDetector } from '../emotion/emotionDetector.js';
 import type { ExtendedWebSocket, SignalingServer } from './server.js';
 
 // Store server reference for callbacks
@@ -95,7 +97,30 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
           );
 
           if (translationResult) {
-            // Broadcast translation to all participants
+            // Detect emotion from the text (Milestone 4)
+            let detectedEmotion: EmotionMarkers | undefined;
+            if (emotionDetector.isReady()) {
+              try {
+                const emotionResult = await emotionDetector.detectEmotion(
+                  result.text,
+                  translationResult.translatedText,
+                  result.language,
+                  targetLanguage,
+                  {
+                    resolution: room.resolution,
+                    speechRole: currentSpeech,
+                    speakerSide: participant.side || 'AFF',
+                    speakerName: participant.displayName,
+                  }
+                );
+                detectedEmotion = emotionResult.emotion;
+              } catch (emotionError) {
+                console.error('[Emotion] Error detecting emotion:', emotionError);
+                // Continue without emotion - TTS will use neutral settings
+              }
+            }
+
+            // Broadcast translation to all participants (include emotion if detected)
             server.broadcastToRoomAll(roomId, {
               type: 'translation:complete',
               payload: {
@@ -107,6 +132,7 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
                 translatedText: translationResult.translatedText,
                 targetLanguage,
                 latencyMs: translationResult.latencyMs,
+                emotion: detectedEmotion,
               },
             });
 
@@ -118,6 +144,7 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
                 currentSpeech,
                 translationResult.translatedText,
                 targetLanguage,
+                detectedEmotion,  // Pass emotion hints to TTS
                 server
               );
             }
@@ -868,6 +895,8 @@ async function handleAudioStop(
 /**
  * Generate TTS audio for listeners who need translation spoken
  * Called after translation completes
+ *
+ * Milestone 4: Now accepts emotion hints to modulate voice settings
  */
 function generateTTSForListeners(
   roomId: string,
@@ -875,6 +904,7 @@ function generateTTSForListeners(
   speechId: SpeechRole,
   translatedText: string,
   targetLanguage: LanguageCode,
+  emotionHints: EmotionMarkers | undefined,
   server: SignalingServer
 ): void {
   const room = roomManager.getRoom(roomId);
@@ -917,9 +947,10 @@ function generateTTSForListeners(
     },
   }, speakerId);  // Exclude speaker from hearing their own TTS
 
-  console.log(`[TTS] Starting generation for ${speakerId}, ${translatedText.length} chars`);
+  const emotionLabel = emotionHints ? `${emotionHints.dominantEmotion} (${Math.round(emotionHints.intensity * 100)}%)` : 'neutral';
+  console.log(`[TTS] Starting generation for ${speakerId}, ${translatedText.length} chars, emotion: ${emotionLabel}`);
 
-  // Queue TTS generation
+  // Queue TTS generation with emotion hints (Milestone 4)
   ttsSessionManager.queueTTS(
     speakerId,
     roomId,
@@ -928,6 +959,7 @@ function generateTTSForListeners(
       text: translatedText,
       voiceId,
       targetLanguage,
+      emotionHints,  // Pass emotion to modulate voice settings
     },
     // onChunk: broadcast audio chunk to listeners
     (chunk: Buffer, chunkIndex: number) => {

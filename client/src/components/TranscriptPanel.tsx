@@ -1,12 +1,23 @@
 /**
  * TranscriptPanel Component
- * 
+ *
  * Displays real-time transcripts with translations from the debate.
+ * Milestone 4: Shows emotion indicators for translated text.
  */
 
 import { useEffect, useRef } from 'react';
 import { useTranscriptStore, type Transcript } from '../stores/transcriptStore';
-import { LANGUAGES } from '@shared/types';
+import { LANGUAGES, type EmotionMarkers } from '@shared/types';
+
+// Emotion display configuration
+const EMOTION_CONFIG: Record<EmotionMarkers['dominantEmotion'], { emoji: string; color: string; label: string }> = {
+  confident: { emoji: '💪', color: 'text-blue-400', label: 'Confident' },
+  passionate: { emoji: '🔥', color: 'text-orange-400', label: 'Passionate' },
+  aggressive: { emoji: '⚔️', color: 'text-red-400', label: 'Aggressive' },
+  measured: { emoji: '📐', color: 'text-green-400', label: 'Measured' },
+  uncertain: { emoji: '🤔', color: 'text-yellow-400', label: 'Uncertain' },
+  neutral: { emoji: '😐', color: 'text-gray-400', label: 'Neutral' },
+};
 
 interface TranscriptPanelProps {
   myParticipantId: string | null;
@@ -66,9 +77,13 @@ interface TranscriptItemProps {
 
 function TranscriptItem({ transcript, isMe, showTranslation }: TranscriptItemProps) {
   const langInfo = LANGUAGES.find((l) => l.code === transcript.language);
-  const translationLangInfo = transcript.translation 
+  const translationLangInfo = transcript.translation
     ? LANGUAGES.find((l) => l.code === transcript.translation?.language)
     : null;
+
+  // Get emotion config if available
+  const emotion = transcript.translation?.emotion;
+  const emotionConfig = emotion ? EMOTION_CONFIG[emotion.dominantEmotion] : null;
 
   return (
     <div className={`text-sm ${isMe ? 'text-blue-300' : 'text-gray-300'}`}>
@@ -85,6 +100,16 @@ function TranscriptItem({ transcript, isMe, showTranslation }: TranscriptItemPro
             <span>•</span>
             <span className="text-emerald-500">
               +{transcript.translation.latencyMs}ms
+            </span>
+          </>
+        )}
+        {/* Emotion indicator (Milestone 4) */}
+        {emotionConfig && emotion && emotion.dominantEmotion !== 'neutral' && (
+          <>
+            <span>•</span>
+            <span className={`${emotionConfig.color} flex items-center gap-1`} title={`${emotionConfig.label} (${Math.round(emotion.intensity * 100)}%)`}>
+              <span>{emotionConfig.emoji}</span>
+              <span className="hidden sm:inline">{emotionConfig.label}</span>
             </span>
           </>
         )}

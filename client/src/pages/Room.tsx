@@ -14,6 +14,7 @@ import { BallotDisplay } from '../components/BallotDisplay';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { VoiceSelector } from '../components/VoiceSelector';
 import { TTSSettings } from '../components/TTSSettings';
+import { DeafenToggle } from '../components/DeafenToggle';
 import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload, type TimeoutWarningPayload, type TimeoutEndPayload, type VoiceConfig } from '@shared/types';
 
 export function Room() {
@@ -37,6 +38,9 @@ export function Room() {
   // TTS state (Milestone 3)
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [ttsVolume, setTtsVolume] = useState(1.0);
+
+  // Deafen state - mute opponent's raw WebRTC audio
+  const [isOpponentDeafened, setIsOpponentDeafened] = useState(false);
 
   // Voice selection state
   const [availableVoices, setAvailableVoices] = useState<VoiceConfig[]>([]);
@@ -172,6 +176,7 @@ export function Room() {
       text: translation.translatedText,
       language: translation.targetLanguage,
       latencyMs: translation.latencyMs,
+      emotion: translation.emotion,  // Milestone 4: Store emotion for UI display
     });
   }, [addTranslation]);
 
@@ -205,15 +210,32 @@ export function Room() {
     }
   }, [selectedVoiceId]);
 
-  // Mute/unmute remote audio when TTS is playing
-  const muteRemoteAudio = useCallback((mute: boolean) => {
+  // Track if TTS is currently playing (for deafen logic)
+  const isTTSPlayingRef = useRef(false);
+
+  // Mute/unmute remote audio - respects both TTS playback and deafen state
+  // Audio is muted if: deafened OR TTS is playing
+  // Audio is unmuted if: NOT deafened AND TTS is not playing
+  const updateRemoteAudioMute = useCallback(() => {
     if (remoteStream) {
+      const shouldMute = isOpponentDeafened || isTTSPlayingRef.current;
       remoteStream.getAudioTracks().forEach(track => {
-        track.enabled = !mute;
+        track.enabled = !shouldMute;
       });
-      console.log(`[Room] Remote audio ${mute ? 'muted' : 'unmuted'} for TTS`);
+      console.log(`[Room] Remote audio ${shouldMute ? 'muted' : 'unmuted'} (deafened: ${isOpponentDeafened}, TTS: ${isTTSPlayingRef.current})`);
     }
-  }, [remoteStream]);
+  }, [remoteStream, isOpponentDeafened]);
+
+  // Legacy function for TTS callbacks - updates ref and applies mute
+  const muteRemoteAudio = useCallback((mute: boolean) => {
+    isTTSPlayingRef.current = mute;
+    updateRemoteAudioMute();
+  }, [updateRemoteAudioMute]);
+
+  // Apply deafen state changes immediately
+  useEffect(() => {
+    updateRemoteAudioMute();
+  }, [isOpponentDeafened, updateRemoteAudioMute]);
 
   // TTS playback hook
   const {
@@ -769,6 +791,15 @@ export function Room() {
                 onEnabledChange={setTtsEnabled}
                 volume={ttsVolume}
                 onVolumeChange={setTtsVolume}
+              />
+            </div>
+
+            {/* Deafen Toggle */}
+            <div className="mt-4">
+              <DeafenToggle
+                isDeafened={isOpponentDeafened}
+                onDeafenChange={setIsOpponentDeafened}
+                disabled={!remoteStream}
               />
             </div>
 

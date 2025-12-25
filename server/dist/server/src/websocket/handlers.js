@@ -9,6 +9,7 @@ import { argumentExtractor } from '../flow/argumentExtractor.js';
 import { ballotGenerator } from '../flow/ballotGenerator.js';
 import { elevenLabsTTS } from '../tts/elevenLabsTts.js';
 import { ttsSessionManager } from '../tts/sessionManager.js';
+import { emotionDetector } from '../emotion/emotionDetector.js';
 // Store server reference for callbacks
 let serverRef = null;
 // Initialize debate callbacks and STT callbacks
@@ -61,7 +62,24 @@ export function initializeDebateCallbacks(server) {
                         speakerName: participant.displayName,
                     });
                     if (translationResult) {
-                        // Broadcast translation to all participants
+                        // Detect emotion from the text (Milestone 4)
+                        let detectedEmotion;
+                        if (emotionDetector.isReady()) {
+                            try {
+                                const emotionResult = await emotionDetector.detectEmotion(result.text, translationResult.translatedText, result.language, targetLanguage, {
+                                    resolution: room.resolution,
+                                    speechRole: currentSpeech,
+                                    speakerSide: participant.side || 'AFF',
+                                    speakerName: participant.displayName,
+                                });
+                                detectedEmotion = emotionResult.emotion;
+                            }
+                            catch (emotionError) {
+                                console.error('[Emotion] Error detecting emotion:', emotionError);
+                                // Continue without emotion - TTS will use neutral settings
+                            }
+                        }
+                        // Broadcast translation to all participants (include emotion if detected)
                         server.broadcastToRoomAll(roomId, {
                             type: 'translation:complete',
                             payload: {
@@ -73,11 +91,13 @@ export function initializeDebateCallbacks(server) {
                                 translatedText: translationResult.translatedText,
                                 targetLanguage,
                                 latencyMs: translationResult.latencyMs,
+                                emotion: detectedEmotion,
                             },
                         });
                         // Generate TTS for listeners who need this translation spoken
                         if (elevenLabsTTS.isReady()) {
-                            generateTTSForListeners(roomId, participantId, currentSpeech, translationResult.translatedText, targetLanguage, server);
+                            generateTTSForListeners(roomId, participantId, currentSpeech, translationResult.translatedText, targetLanguage, detectedEmotion, // Pass emotion hints to TTS
+                            server);
                         }
                     }
                 }
@@ -662,8 +682,10 @@ async function handleAudioStop(client, payload, server) {
 /**
  * Generate TTS audio for listeners who need translation spoken
  * Called after translation completes
+ *
+ * Milestone 4: Now accepts emotion hints to modulate voice settings
  */
-function generateTTSForListeners(roomId, speakerId, speechId, translatedText, targetLanguage, server) {
+function generateTTSForListeners(roomId, speakerId, speechId, translatedText, targetLanguage, emotionHints, server) {
     const room = roomManager.getRoom(roomId);
     if (!room)
         return;
@@ -699,12 +721,14 @@ function generateTTSForListeners(roomId, speakerId, speechId, translatedText, ta
             text: translatedText,
         },
     }, speakerId); // Exclude speaker from hearing their own TTS
-    console.log(`[TTS] Starting generation for ${speakerId}, ${translatedText.length} chars`);
-    // Queue TTS generation
+    const emotionLabel = emotionHints ? `${emotionHints.dominantEmotion} (${Math.round(emotionHints.intensity * 100)}%)` : 'neutral';
+    console.log(`[TTS] Starting generation for ${speakerId}, ${translatedText.length} chars, emotion: ${emotionLabel}`);
+    // Queue TTS generation with emotion hints (Milestone 4)
     ttsSessionManager.queueTTS(speakerId, roomId, speechId, {
         text: translatedText,
         voiceId,
         targetLanguage,
+        emotionHints, // Pass emotion to modulate voice settings
     }, 
     // onChunk: broadcast audio chunk to listeners
     (chunk, chunkIndex) => {

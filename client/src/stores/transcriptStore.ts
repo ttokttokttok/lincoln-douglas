@@ -1,16 +1,17 @@
 /**
  * Transcript Store
- * 
+ *
  * Manages real-time transcripts from STT service with translations.
  */
 
 import { create } from 'zustand';
-import type { SpeechRole, LanguageCode } from '@shared/types';
+import type { SpeechRole, LanguageCode, EmotionMarkers } from '@shared/types';
 
 export interface Translation {
   text: string;
   language: LanguageCode;
   latencyMs: number;
+  emotion?: EmotionMarkers;  // Milestone 4: Detected emotion for UI display
 }
 
 export interface Transcript {

@@ -467,10 +467,15 @@ GET    /api/rooms/:roomId/recording  Get recording with all audio tracks
 - [ ] Voice selection UI in pre-debate setup (Phase 4 - optional polish)
 - [ ] (Stretch) Voice cloning from 30-second sample
 
-### Milestone 4 — Emotion Preservation + Polish
-- [ ] Emotion detection from source audio/text
-- [ ] Emotion → TTS parameter mapping
-- [ ] A/B comparison: with/without emotion preservation
+### Milestone 4 — Emotion Preservation + Polish ✅ COMPLETE
+> **See [MILESTONE_4.md](./MILESTONE_4.md) for detailed implementation plan**
+
+- [x] Emotion detection service (Gemini text analysis)
+- [x] Pipeline integration (translation → emotion → TTS)
+- [x] Emotion → TTS parameter mapping (stability, speed)
+- [x] Emotion continuity (smooth transitions between utterances)
+- [x] UI emotion indicators (emoji + color in transcript panel)
+- [ ] A/B comparison toggle (stretch goal)
 
 ---
 
