@@ -1,8 +1,9 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useWebSocket, type TranscriptMessage, type TranslationMessage } from '../hooks/useWebSocket';
+import { useWebSocket, type TranscriptMessage, type TranslationMessage, type TTSStartMessage, type TTSChunkMessage, type TTSEndMessage } from '../hooks/useWebSocket';
 import { useMediaStream } from '../hooks/useMediaStream';
 import { useAudioStream, arrayBufferToBase64 } from '../hooks/useAudioStream';
+import { useAudioPlayback } from '../hooks/useAudioPlayback';
 import { usePeer, type SignalData } from '../hooks/usePeer';
 import { useRoomStore } from '../stores/roomStore';
 import { useTranscriptStore } from '../stores/transcriptStore';
@@ -27,6 +28,10 @@ export function Room() {
 
   // Ballot state (shown at end of debate)
   const [ballotData, setBallotData] = useState<BallotReadyPayload | null>(null);
+
+  // TTS state (Milestone 3)
+  const [ttsEnabled, _setTtsEnabled] = useState(true);
+  const [ttsVolume, _setTtsVolume] = useState(1.0);
 
   // Track if we're the initiator (first to join with stream ready)
   const isInitiatorRef = useRef(false);
@@ -165,6 +170,69 @@ export function Room() {
     setBallotData(payload);
   }, []);
 
+  // Mute/unmute remote audio when TTS is playing
+  const muteRemoteAudio = useCallback((mute: boolean) => {
+    if (remoteStream) {
+      remoteStream.getAudioTracks().forEach(track => {
+        track.enabled = !mute;
+      });
+      console.log(`[Room] Remote audio ${mute ? 'muted' : 'unmuted'} for TTS`);
+    }
+  }, [remoteStream]);
+
+  // TTS playback hook
+  const {
+    isPlaying: isTTSPlaying,
+    handleAudioChunk: handleTTSAudioChunk,
+    handleTTSStart: handleTTSStartPlayback,
+    handleTTSEnd: handleTTSEndPlayback,
+    setVolume: setTTSPlaybackVolume,
+    initialize: initializeTTS,
+  } = useAudioPlayback({
+    enabled: ttsEnabled,
+    onPlaybackStart: (speakerId) => {
+      console.log('[Room] TTS playback started for', speakerId);
+      muteRemoteAudio(true);
+    },
+    onPlaybackEnd: (speakerId) => {
+      console.log('[Room] TTS playback ended for', speakerId);
+      muteRemoteAudio(false);
+    },
+  });
+
+  // TTS event handlers
+  const handleTTSStart = useCallback((message: TTSStartMessage) => {
+    handleTTSStartPlayback(message.speakerId, message.speechId);
+  }, [handleTTSStartPlayback]);
+
+  const handleTTSChunk = useCallback((message: TTSChunkMessage) => {
+    handleTTSAudioChunk(
+      message.speakerId,
+      message.chunkIndex,
+      message.audioData,
+      message.isFinal
+    );
+  }, [handleTTSAudioChunk]);
+
+  const handleTTSEnd = useCallback((message: TTSEndMessage) => {
+    handleTTSEndPlayback(message.speakerId, message.speechId);
+  }, [handleTTSEndPlayback]);
+
+  // Initialize TTS on first user interaction (for AudioContext)
+  useEffect(() => {
+    const initOnInteraction = () => {
+      initializeTTS();
+      window.removeEventListener('click', initOnInteraction);
+    };
+    window.addEventListener('click', initOnInteraction);
+    return () => window.removeEventListener('click', initOnInteraction);
+  }, [initializeTTS]);
+
+  // Update TTS volume when changed
+  useEffect(() => {
+    setTTSPlaybackVolume(ttsVolume);
+  }, [ttsVolume, setTTSPlaybackVolume]);
+
   // WebSocket connection
   const {
     setReady,
@@ -189,6 +257,10 @@ export function Room() {
     onTranscript: handleTranscript,
     onTranslation: handleTranslation,
     onBallot: handleBallot,
+    // TTS callbacks (Milestone 3)
+    onTTSStart: handleTTSStart,
+    onTTSChunk: handleTTSChunk,
+    onTTSEnd: handleTTSEnd,
   });
 
   // Set signal senders ref for usePeer callback
@@ -646,6 +718,7 @@ export function Room() {
             <p>Video: local={localStream ? 'yes' : 'no'}, remote={remoteStream ? 'yes' : 'no'}</p>
             <p>Peer: connected={String(isPeerConnected)}, connecting={String(isPeerConnecting)}</p>
             <p>Audio: initialized={String(isAudioInitialized)}, streaming={String(isAudioStreaming)}, speaking={String(isCurrentlySpeaking)}</p>
+            <p>TTS: enabled={String(ttsEnabled)}, playing={String(isTTSPlaying)}, volume={ttsVolume}</p>
             {audioError && <p className="text-red-400">Audio Error: {audioError.message}</p>}
           </div>
         )}

@@ -33,7 +33,7 @@ export interface TimerState {
     isPrepTime: boolean;
     prepSide: Side | null;
 }
-export type WSMessageType = 'room:create' | 'room:join' | 'room:leave' | 'room:state' | 'room:ready' | 'room:start' | 'room:error' | 'participant:update' | 'participant:joined' | 'participant:left' | 'signal:offer' | 'signal:answer' | 'signal:ice' | 'timer:update' | 'timer:start' | 'timer:pause' | 'speech:start' | 'speech:end' | 'prep:start' | 'prep:end' | 'error' | 'audio:start' | 'audio:chunk' | 'audio:stop' | 'stt:interim' | 'stt:final' | 'translation:interim' | 'translation:complete' | 'flow:argument' | 'flow:state' | 'ballot:ready' | 'latency:update';
+export type WSMessageType = 'room:create' | 'room:join' | 'room:leave' | 'room:state' | 'room:ready' | 'room:start' | 'room:error' | 'participant:update' | 'participant:joined' | 'participant:left' | 'signal:offer' | 'signal:answer' | 'signal:ice' | 'timer:update' | 'timer:start' | 'timer:pause' | 'speech:start' | 'speech:end' | 'prep:start' | 'prep:end' | 'error' | 'audio:start' | 'audio:chunk' | 'audio:stop' | 'stt:interim' | 'stt:final' | 'translation:interim' | 'translation:complete' | 'flow:argument' | 'flow:state' | 'ballot:ready' | 'latency:update' | 'tts:start' | 'tts:audio_chunk' | 'tts:end' | 'tts:error' | 'voice:select' | 'voice:list:request' | 'voice:list';
 export interface WSMessage<T = unknown> {
     type: WSMessageType;
     payload: T;
@@ -179,5 +179,69 @@ export interface Ballot {
 export interface BallotReadyPayload {
     ballot: Ballot;
     flowState: FlowState;
+}
+export interface VoiceConfig {
+    voiceId: string;
+    name: string;
+    language: LanguageCode;
+    previewUrl?: string;
+    labels?: {
+        accent?: string;
+        age?: string;
+        gender?: string;
+        use_case?: string;
+    };
+}
+export interface VoiceSettings {
+    stability: number;
+    similarity_boost: number;
+    style: number;
+    speed: number;
+    use_speaker_boost: boolean;
+}
+export interface TTSRequest {
+    text: string;
+    voiceId: string;
+    targetLanguage: LanguageCode;
+    emotionHints?: EmotionMarkers;
+}
+export interface EmotionMarkers {
+    dominantEmotion: 'neutral' | 'confident' | 'passionate' | 'aggressive' | 'measured' | 'uncertain';
+    intensity: number;
+    confidence: number;
+    suggestedSettings?: VoiceSettings;
+}
+export interface TTSAudioChunkPayload {
+    speakerId: string;
+    speechId: string;
+    chunkIndex: number;
+    audioData: string;
+    isFinal: boolean;
+    timestamp: number;
+}
+export interface TTSStartPayload {
+    speakerId: string;
+    speechId: string;
+    text: string;
+}
+export interface TTSEndPayload {
+    speakerId: string;
+    speechId: string;
+}
+export interface TTSErrorPayload {
+    speakerId: string;
+    speechId: string;
+    error: string;
+}
+export interface VoiceSelectPayload {
+    speakingVoiceId: string;
+    listeningVoiceId?: string;
+}
+export interface VoiceListRequestPayload {
+    language: LanguageCode;
+}
+export interface VoiceListPayload {
+    voices: VoiceConfig[];
+    language: LanguageCode;
 }
 //# sourceMappingURL=types.d.ts.map

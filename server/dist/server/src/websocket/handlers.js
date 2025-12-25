@@ -7,6 +7,8 @@ import { translationService } from '../translation/geminiTranslation.js';
 import { flowStateManager } from '../flow/flowStateManager.js';
 import { argumentExtractor } from '../flow/argumentExtractor.js';
 import { ballotGenerator } from '../flow/ballotGenerator.js';
+import { elevenLabsTTS } from '../tts/elevenLabsTts.js';
+import { ttsSessionManager } from '../tts/sessionManager.js';
 // Store server reference for callbacks
 let serverRef = null;
 // Initialize debate callbacks and STT callbacks
@@ -73,6 +75,10 @@ export function initializeDebateCallbacks(server) {
                                 latencyMs: translationResult.latencyMs,
                             },
                         });
+                        // Generate TTS for listeners who need this translation spoken
+                        if (elevenLabsTTS.isReady()) {
+                            generateTTSForListeners(roomId, participantId, currentSpeech, translationResult.translatedText, targetLanguage, server);
+                        }
                     }
                 }
                 catch (error) {
@@ -152,8 +158,41 @@ export function initializeDebateCallbacks(server) {
                 });
             }
             console.log(`Debate ended in room ${roomId}`);
+            // IMPORTANT: Clean up all audio/STT sessions to stop Gemini API calls
+            // This prevents wasting credits after the debate ends
+            const roomSessions = audioSessionManager.getRoomSessions(roomId);
+            for (const session of roomSessions) {
+                console.log(`[Cleanup] Ending audio session for ${session.participantId}`);
+                audioSessionManager.endSession(session.participantId);
+                await geminiSttService.endSession(session.participantId);
+            }
+            console.log(`[Cleanup] Cleaned up ${roomSessions.length} audio session(s) for room ${roomId}`);
+            // Clean up TTS sessions
+            ttsSessionManager.endRoomSessions(roomId);
+            console.log(`[Cleanup] Cleaned up TTS sessions for room ${roomId}`);
             // Generate ballot and flow state
             if (ballotGenerator.isReady() && room) {
+                // Wait briefly for any in-flight 2AR extraction from onSpeechEnd callback
+                // (The onSpeechEnd is async but not awaited by the timer callback chain)
+                await new Promise(resolve => setTimeout(resolve, 500));
+                // Ensure 2AR arguments are extracted (in case the async onSpeechEnd hasn't completed)
+                const existing2ARArgs = flowStateManager.getArgumentsBySpeech(roomId, '2AR');
+                if (existing2ARArgs.length === 0 && argumentExtractor.isReady()) {
+                    const transcript = flowStateManager.getSpeechTranscript(roomId, '2AR');
+                    if (transcript && transcript.length > 50) {
+                        console.log('[Flow] Ensuring 2AR extraction before ballot...');
+                        const priorArguments = flowStateManager.getArguments(roomId);
+                        const extractedArgs = await argumentExtractor.extractArguments(transcript, {
+                            resolution: room.resolution,
+                            speech: '2AR',
+                            priorArguments,
+                        });
+                        if (extractedArgs.length > 0) {
+                            flowStateManager.addArguments(roomId, extractedArgs);
+                            console.log(`[Flow] Extracted ${extractedArgs.length} arguments from 2AR (fallback)`);
+                        }
+                    }
+                }
                 const flowState = flowStateManager.getFlowState(roomId);
                 const participants = Array.from(room.participants.values());
                 const affParticipant = participants.find(p => p.side === 'AFF');
@@ -236,6 +275,13 @@ export function handleMessage(client, message, server) {
             break;
         case 'audio:stop':
             handleAudioStop(client, message.payload, server);
+            break;
+        // TTS/Voice messages (Milestone 3)
+        case 'voice:list:request':
+            handleVoiceListRequest(client, message.payload, server);
+            break;
+        case 'voice:select':
+            handleVoiceSelect(client, message.payload, server);
             break;
         default:
             console.warn(`Unknown message type: ${message.type}`);
@@ -541,6 +587,11 @@ function handleAudioChunk(client, payload, server) {
     if (!client.roomId) {
         return; // Silently ignore if not in room
     }
+    // Check if debate is still in progress (prevent wasting Gemini credits after debate ends)
+    const room = roomManager.getRoom(client.roomId);
+    if (!room || room.status !== 'in_progress') {
+        return; // Debate is over, ignore audio chunks
+    }
     // Decode base64 audio data
     const audioBuffer = Buffer.from(payload.audioData, 'base64');
     // Process the chunk through session manager
@@ -567,5 +618,133 @@ async function handleAudioStop(client, payload, server) {
     if (geminiSttService.isReady()) {
         await geminiSttService.endSession(client.id);
     }
+}
+// ==========================================
+// TTS/Voice Handlers (Milestone 3)
+// ==========================================
+/**
+ * Generate TTS audio for listeners who need translation spoken
+ * Called after translation completes
+ */
+function generateTTSForListeners(roomId, speakerId, speechId, translatedText, targetLanguage, server) {
+    const room = roomManager.getRoom(roomId);
+    if (!room)
+        return;
+    // Find listeners who need this translation (those whose listeningLanguage matches targetLanguage)
+    const listeners = Array.from(room.participants.values())
+        .filter(p => p.id !== speakerId && p.listeningLanguage === targetLanguage);
+    if (listeners.length === 0) {
+        return;
+    }
+    // Get or assign voice for speaker
+    let voiceId = ttsSessionManager.getVoiceForParticipant(speakerId);
+    if (!voiceId) {
+        // Use default voice for target language
+        const defaultVoice = elevenLabsTTS.getDefaultVoice(targetLanguage);
+        if (!defaultVoice) {
+            console.warn(`[TTS] No voice available for language ${targetLanguage}`);
+            return;
+        }
+        voiceId = defaultVoice.voiceId;
+        ttsSessionManager.setVoiceForParticipant(speakerId, voiceId);
+    }
+    // Notify listeners that TTS is starting
+    server.broadcastToRoom(roomId, {
+        type: 'tts:start',
+        payload: {
+            speakerId,
+            speechId,
+            text: translatedText,
+        },
+    }, speakerId); // Exclude speaker from hearing their own TTS
+    console.log(`[TTS] Starting generation for ${speakerId}, ${translatedText.length} chars`);
+    // Queue TTS generation
+    ttsSessionManager.queueTTS(speakerId, roomId, speechId, {
+        text: translatedText,
+        voiceId,
+        targetLanguage,
+    }, 
+    // onChunk: broadcast audio chunk to listeners
+    (chunk, chunkIndex) => {
+        server.broadcastToRoom(roomId, {
+            type: 'tts:audio_chunk',
+            payload: {
+                speakerId,
+                speechId,
+                chunkIndex,
+                audioData: chunk.toString('base64'),
+                isFinal: false,
+                timestamp: Date.now(),
+            },
+        }, speakerId);
+    }, 
+    // onComplete: notify TTS finished
+    () => {
+        server.broadcastToRoom(roomId, {
+            type: 'tts:end',
+            payload: {
+                speakerId,
+                speechId,
+            },
+        }, speakerId);
+        console.log(`[TTS] Completed generation for ${speakerId}`);
+    }, 
+    // onError: notify error
+    (error) => {
+        server.broadcastToRoom(roomId, {
+            type: 'tts:error',
+            payload: {
+                speakerId,
+                speechId,
+                error: error.message,
+            },
+        }, speakerId);
+        console.error(`[TTS] Error for ${speakerId}:`, error.message);
+    });
+}
+/**
+ * Handle request for available voices for a language
+ */
+function handleVoiceListRequest(client, payload, server) {
+    if (!client.roomId) {
+        server.sendError(client.id, 'Not in a room');
+        return;
+    }
+    const voices = elevenLabsTTS.getPresetVoices(payload.language);
+    server.send(client.id, {
+        type: 'voice:list',
+        payload: {
+            voices,
+            language: payload.language,
+        },
+    });
+    console.log(`[Voice] Sent ${voices.length} voices for ${payload.language} to ${client.id}`);
+}
+/**
+ * Handle voice selection from a participant
+ */
+function handleVoiceSelect(client, payload, server) {
+    if (!client.roomId) {
+        server.sendError(client.id, 'Not in a room');
+        return;
+    }
+    const { speakingVoiceId } = payload;
+    // Validate voice ID exists
+    if (!elevenLabsTTS.isValidVoiceId(speakingVoiceId)) {
+        server.sendError(client.id, 'Invalid voice ID');
+        return;
+    }
+    // Set voice for this participant
+    ttsSessionManager.setVoiceForParticipant(client.id, speakingVoiceId);
+    // Notify room of voice selection
+    server.broadcastToRoomAll(client.roomId, {
+        type: 'voice:select',
+        payload: {
+            participantId: client.id,
+            speakingVoiceId,
+        },
+    });
+    const voice = elevenLabsTTS.getVoiceById(speakingVoiceId);
+    console.log(`[Voice] ${client.id} selected voice: ${voice?.name || speakingVoiceId}`);
 }
 //# sourceMappingURL=handlers.js.map

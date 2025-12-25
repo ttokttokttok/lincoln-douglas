@@ -13,6 +13,12 @@ import type {
   STTFinalPayload,
   TranslationCompletePayload,
   BallotReadyPayload,
+  TTSStartPayload,
+  TTSAudioChunkPayload,
+  TTSEndPayload,
+  TTSErrorPayload,
+  VoiceListPayload,
+  VoiceConfig,
 } from '@shared/types';
 
 const WS_URL = 'ws://localhost:3001/ws';
@@ -45,6 +51,33 @@ export interface TranslationMessage {
   latencyMs: number;
 }
 
+// TTS message types for callbacks
+export interface TTSStartMessage {
+  speakerId: string;
+  speechId: string;
+  text: string;
+}
+
+export interface TTSChunkMessage {
+  speakerId: string;
+  speechId: string;
+  chunkIndex: number;
+  audioData: string;
+  isFinal: boolean;
+  timestamp: number;
+}
+
+export interface TTSEndMessage {
+  speakerId: string;
+  speechId: string;
+}
+
+export interface TTSErrorMessage {
+  speakerId: string;
+  speechId: string;
+  error: string;
+}
+
 interface UseWebSocketOptions {
   roomCode: string;
   displayName: string;
@@ -54,10 +87,19 @@ interface UseWebSocketOptions {
   onTranscript?: (transcript: TranscriptMessage) => void;
   onTranslation?: (translation: TranslationMessage) => void;
   onBallot?: (payload: BallotReadyPayload) => void;
+  // TTS callbacks (Milestone 3)
+  onTTSStart?: (message: TTSStartMessage) => void;
+  onTTSChunk?: (message: TTSChunkMessage) => void;
+  onTTSEnd?: (message: TTSEndMessage) => void;
+  onTTSError?: (message: TTSErrorMessage) => void;
+  onVoiceList?: (voices: VoiceConfig[], language: LanguageCode) => void;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
-  const { roomCode, displayName, onConnect, onDisconnect, onSignal, onTranscript, onTranslation, onBallot } = options;
+  const {
+    roomCode, displayName, onConnect, onDisconnect, onSignal, onTranscript, onTranslation, onBallot,
+    onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList,
+  } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -175,13 +217,67 @@ export function useWebSocket(options: UseWebSocketOptions) {
           break;
         }
 
+        // TTS messages (Milestone 3)
+        case 'tts:start': {
+          const payload = message.payload as TTSStartPayload;
+          console.log('[WS] TTS starting for', payload.speakerId);
+          onTTSStart?.({
+            speakerId: payload.speakerId,
+            speechId: payload.speechId,
+            text: payload.text,
+          });
+          break;
+        }
+
+        case 'tts:audio_chunk': {
+          const payload = message.payload as TTSAudioChunkPayload;
+          // Don't log every chunk (too noisy)
+          onTTSChunk?.({
+            speakerId: payload.speakerId,
+            speechId: payload.speechId,
+            chunkIndex: payload.chunkIndex,
+            audioData: payload.audioData,
+            isFinal: payload.isFinal,
+            timestamp: payload.timestamp,
+          });
+          break;
+        }
+
+        case 'tts:end': {
+          const payload = message.payload as TTSEndPayload;
+          console.log('[WS] TTS ended for', payload.speakerId);
+          onTTSEnd?.({
+            speakerId: payload.speakerId,
+            speechId: payload.speechId,
+          });
+          break;
+        }
+
+        case 'tts:error': {
+          const payload = message.payload as TTSErrorPayload;
+          console.error('[WS] TTS error for', payload.speakerId, ':', payload.error);
+          onTTSError?.({
+            speakerId: payload.speakerId,
+            speechId: payload.speechId,
+            error: payload.error,
+          });
+          break;
+        }
+
+        case 'voice:list': {
+          const payload = message.payload as VoiceListPayload;
+          console.log('[WS] Voice list received:', payload.voices.length, 'voices for', payload.language);
+          onVoiceList?.(payload.voices, payload.language);
+          break;
+        }
+
         default:
           console.log('[WS] Unhandled message type:', message.type);
       }
     } catch (error) {
       console.error('[WS] Failed to parse message:', error);
     }
-  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot]);
+  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList]);
 
   // Send a message
   const send = useCallback((type: WSMessageType, payload: unknown) => {
@@ -362,6 +458,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
     console.log('[WS] Stopped audio stream for', speechId);
   }, [send]);
 
+  // Voice selection (Milestone 3)
+  const requestVoiceList = useCallback((language: LanguageCode) => {
+    send('voice:list:request', { language });
+    console.log('[WS] Requested voice list for', language);
+  }, [send]);
+
+  const selectVoice = useCallback((speakingVoiceId: string) => {
+    send('voice:select', { speakingVoiceId });
+    console.log('[WS] Selected voice:', speakingVoiceId);
+  }, [send]);
+
   return {
     send,
     connect,
@@ -383,5 +490,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
     startAudioStream,
     sendAudioChunk,
     stopAudioStream,
+    // Voice selection (Milestone 3)
+    requestVoiceList,
+    selectVoice,
   };
 }

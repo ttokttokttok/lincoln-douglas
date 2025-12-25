@@ -92,22 +92,20 @@ export class TimerController {
         const completedSpeech = this.state.currentSpeech;
         // Move to next speech
         this.currentSpeechIndex++;
+        // Determine next speech (null if debate is complete)
+        const nextSpeech = this.currentSpeechIndex < SPEECH_ORDER.length
+            ? SPEECH_ORDER[this.currentSpeechIndex]
+            : null;
+        // Update state
+        this.state.currentSpeech = null;
+        this.state.speechTimeRemaining = 0;
+        this.state.isRunning = false;
+        this.callbacks.onTick(this.getState());
+        // Always notify speech completion (so 2AR arguments get extracted!)
+        this.callbacks.onSpeechComplete(completedSpeech, nextSpeech);
+        // If debate is complete, notify after speech completion
         if (this.currentSpeechIndex >= SPEECH_ORDER.length) {
-            // Debate is complete
-            this.state.currentSpeech = null;
-            this.state.speechTimeRemaining = 0;
-            this.state.isRunning = false;
-            this.callbacks.onTick(this.getState());
             this.callbacks.onDebateComplete();
-        }
-        else {
-            // More speeches remaining
-            const nextSpeech = SPEECH_ORDER[this.currentSpeechIndex];
-            this.state.currentSpeech = null;
-            this.state.speechTimeRemaining = 0;
-            this.state.isRunning = false;
-            this.callbacks.onTick(this.getState());
-            this.callbacks.onSpeechComplete(completedSpeech, nextSpeech);
         }
     }
     // Start the next speech (called after prep or transition)

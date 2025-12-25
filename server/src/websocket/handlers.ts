@@ -10,6 +10,8 @@ import type {
   AudioChunkPayload,
   AudioStopPayload,
   LanguageCode,
+  VoiceSelectPayload,
+  VoiceListRequestPayload,
 } from '@shared/types';
 import { SPEECH_ORDER, SPEECH_SIDES } from '@shared/types';
 import { roomManager } from '../rooms/manager.js';
@@ -20,6 +22,8 @@ import { translationService } from '../translation/geminiTranslation.js';
 import { flowStateManager } from '../flow/flowStateManager.js';
 import { argumentExtractor } from '../flow/argumentExtractor.js';
 import { ballotGenerator } from '../flow/ballotGenerator.js';
+import { elevenLabsTTS } from '../tts/elevenLabsTts.js';
+import { ttsSessionManager } from '../tts/sessionManager.js';
 import type { ExtendedWebSocket, SignalingServer } from './server.js';
 
 // Store server reference for callbacks
@@ -104,6 +108,18 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
                 latencyMs: translationResult.latencyMs,
               },
             });
+
+            // Generate TTS for listeners who need this translation spoken
+            if (elevenLabsTTS.isReady()) {
+              generateTTSForListeners(
+                roomId,
+                participantId,
+                currentSpeech,
+                translationResult.translatedText,
+                targetLanguage,
+                server
+              );
+            }
           }
         } catch (error) {
           console.error('[Translation] Error translating:', error);
@@ -198,6 +214,10 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
         await geminiSttService.endSession(session.participantId);
       }
       console.log(`[Cleanup] Cleaned up ${roomSessions.length} audio session(s) for room ${roomId}`);
+
+      // Clean up TTS sessions
+      ttsSessionManager.endRoomSessions(roomId);
+      console.log(`[Cleanup] Cleaned up TTS sessions for room ${roomId}`);
 
       // Generate ballot and flow state
       if (ballotGenerator.isReady() && room) {
@@ -329,6 +349,15 @@ export function handleMessage(
 
     case 'audio:stop':
       handleAudioStop(client, message.payload as AudioStopPayload, server);
+      break;
+
+    // TTS/Voice messages (Milestone 3)
+    case 'voice:list:request':
+      handleVoiceListRequest(client, message.payload as VoiceListRequestPayload, server);
+      break;
+
+    case 'voice:select':
+      handleVoiceSelect(client, message.payload as VoiceSelectPayload, server);
       break;
 
     default:
@@ -787,4 +816,169 @@ async function handleAudioStop(
   if (geminiSttService.isReady()) {
     await geminiSttService.endSession(client.id);
   }
+}
+
+// ==========================================
+// TTS/Voice Handlers (Milestone 3)
+// ==========================================
+
+/**
+ * Generate TTS audio for listeners who need translation spoken
+ * Called after translation completes
+ */
+function generateTTSForListeners(
+  roomId: string,
+  speakerId: string,
+  speechId: SpeechRole,
+  translatedText: string,
+  targetLanguage: LanguageCode,
+  server: SignalingServer
+): void {
+  const room = roomManager.getRoom(roomId);
+  if (!room) return;
+
+  // Find listeners who need this translation (those whose listeningLanguage matches targetLanguage)
+  const listeners = Array.from(room.participants.values())
+    .filter(p => p.id !== speakerId && p.listeningLanguage === targetLanguage);
+
+  if (listeners.length === 0) {
+    return;
+  }
+
+  // Get or assign voice for speaker
+  let voiceId = ttsSessionManager.getVoiceForParticipant(speakerId);
+  if (!voiceId) {
+    // Use default voice for target language
+    const defaultVoice = elevenLabsTTS.getDefaultVoice(targetLanguage);
+    if (!defaultVoice) {
+      console.warn(`[TTS] No voice available for language ${targetLanguage}`);
+      return;
+    }
+    voiceId = defaultVoice.voiceId;
+    ttsSessionManager.setVoiceForParticipant(speakerId, voiceId);
+  }
+
+  // Notify listeners that TTS is starting
+  server.broadcastToRoom(roomId, {
+    type: 'tts:start',
+    payload: {
+      speakerId,
+      speechId,
+      text: translatedText,
+    },
+  }, speakerId);  // Exclude speaker from hearing their own TTS
+
+  console.log(`[TTS] Starting generation for ${speakerId}, ${translatedText.length} chars`);
+
+  // Queue TTS generation
+  ttsSessionManager.queueTTS(
+    speakerId,
+    roomId,
+    speechId,
+    {
+      text: translatedText,
+      voiceId,
+      targetLanguage,
+    },
+    // onChunk: broadcast audio chunk to listeners
+    (chunk: Buffer, chunkIndex: number) => {
+      server.broadcastToRoom(roomId, {
+        type: 'tts:audio_chunk',
+        payload: {
+          speakerId,
+          speechId,
+          chunkIndex,
+          audioData: chunk.toString('base64'),
+          isFinal: false,
+          timestamp: Date.now(),
+        },
+      }, speakerId);
+    },
+    // onComplete: notify TTS finished
+    () => {
+      server.broadcastToRoom(roomId, {
+        type: 'tts:end',
+        payload: {
+          speakerId,
+          speechId,
+        },
+      }, speakerId);
+      console.log(`[TTS] Completed generation for ${speakerId}`);
+    },
+    // onError: notify error
+    (error: Error) => {
+      server.broadcastToRoom(roomId, {
+        type: 'tts:error',
+        payload: {
+          speakerId,
+          speechId,
+          error: error.message,
+        },
+      }, speakerId);
+      console.error(`[TTS] Error for ${speakerId}:`, error.message);
+    }
+  );
+}
+
+/**
+ * Handle request for available voices for a language
+ */
+function handleVoiceListRequest(
+  client: ExtendedWebSocket,
+  payload: VoiceListRequestPayload,
+  server: SignalingServer
+): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  const voices = elevenLabsTTS.getPresetVoices(payload.language);
+
+  server.send(client.id, {
+    type: 'voice:list',
+    payload: {
+      voices,
+      language: payload.language,
+    },
+  });
+
+  console.log(`[Voice] Sent ${voices.length} voices for ${payload.language} to ${client.id}`);
+}
+
+/**
+ * Handle voice selection from a participant
+ */
+function handleVoiceSelect(
+  client: ExtendedWebSocket,
+  payload: VoiceSelectPayload,
+  server: SignalingServer
+): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  const { speakingVoiceId } = payload;
+
+  // Validate voice ID exists
+  if (!elevenLabsTTS.isValidVoiceId(speakingVoiceId)) {
+    server.sendError(client.id, 'Invalid voice ID');
+    return;
+  }
+
+  // Set voice for this participant
+  ttsSessionManager.setVoiceForParticipant(client.id, speakingVoiceId);
+
+  // Notify room of voice selection
+  server.broadcastToRoomAll(client.roomId, {
+    type: 'voice:select',
+    payload: {
+      participantId: client.id,
+      speakingVoiceId,
+    },
+  });
+
+  const voice = elevenLabsTTS.getVoiceById(speakingVoiceId);
+  console.log(`[Voice] ${client.id} selected voice: ${voice?.name || speakingVoiceId}`);
 }

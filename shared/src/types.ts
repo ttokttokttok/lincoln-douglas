@@ -98,7 +98,15 @@ export type WSMessageType =
   // Ballot (Milestone 2)
   | 'ballot:ready'
   // Latency metrics (Milestone 2)
-  | 'latency:update';
+  | 'latency:update'
+  // TTS (Milestone 3)
+  | 'tts:start'           // Server -> Client: TTS generation starting
+  | 'tts:audio_chunk'     // Server -> Client: Audio data chunk
+  | 'tts:end'             // Server -> Client: TTS generation complete
+  | 'tts:error'           // Server -> Client: TTS error occurred
+  | 'voice:select'        // Client -> Server: User selected a voice
+  | 'voice:list:request'  // Client -> Server: Request available voices
+  | 'voice:list';         // Server -> Client: Available voices
 
 // Base WebSocket message
 export interface WSMessage<T = unknown> {
@@ -416,4 +424,95 @@ export interface Ballot {
 export interface BallotReadyPayload {
   ballot: Ballot;
   flowState: FlowState;
+}
+
+// ==========================================
+// Milestone 3: ElevenLabs TTS Types
+// ==========================================
+
+// ElevenLabs voice configuration
+export interface VoiceConfig {
+  voiceId: string;
+  name: string;
+  language: LanguageCode;
+  previewUrl?: string;
+  labels?: {
+    accent?: string;
+    age?: string;
+    gender?: string;
+    use_case?: string;
+  };
+}
+
+// Voice settings for TTS
+// Based on ElevenLabs best practices: https://elevenlabs.io/docs/agents-platform/customization/voice/best-practices/conversational-voice-design
+export interface VoiceSettings {
+  stability: number;         // 0-1, recommended: 0.50-0.65 for debate (balance expressiveness/reliability)
+  similarity_boost: number;  // 0-1, recommended: 0.70-0.80 (high clarity without distortion)
+  style: number;             // 0-1, KEEP AT 0 - ElevenLabs recommends 0 for stability
+  speed: number;             // 0.7-1.2, recommended: 0.95-1.05 for natural conversation
+  use_speaker_boost: boolean; // true for enhanced clarity
+}
+
+// TTS request configuration
+export interface TTSRequest {
+  text: string;
+  voiceId: string;
+  targetLanguage: LanguageCode;
+  emotionHints?: EmotionMarkers;
+}
+
+// Emotion markers for voice modulation
+export interface EmotionMarkers {
+  dominantEmotion: 'neutral' | 'confident' | 'passionate' | 'aggressive' | 'measured' | 'uncertain';
+  intensity: number;      // 0-1
+  confidence: number;     // 0-1
+  suggestedSettings?: VoiceSettings;
+}
+
+// TTS audio chunk payload
+export interface TTSAudioChunkPayload {
+  speakerId: string;
+  speechId: string;
+  chunkIndex: number;
+  audioData: string;      // Base64 encoded MP3 chunk
+  isFinal: boolean;
+  timestamp: number;
+}
+
+// TTS start payload
+export interface TTSStartPayload {
+  speakerId: string;
+  speechId: string;
+  text: string;
+}
+
+// TTS end payload
+export interface TTSEndPayload {
+  speakerId: string;
+  speechId: string;
+}
+
+// TTS error payload
+export interface TTSErrorPayload {
+  speakerId: string;
+  speechId: string;
+  error: string;
+}
+
+// Voice selection payload
+export interface VoiceSelectPayload {
+  speakingVoiceId: string;    // Voice for when I speak (others hear)
+  listeningVoiceId?: string;  // Preferred voice for opponent (optional)
+}
+
+// Voice list request payload
+export interface VoiceListRequestPayload {
+  language: LanguageCode;
+}
+
+// Voice list response payload
+export interface VoiceListPayload {
+  voices: VoiceConfig[];
+  language: LanguageCode;
 }

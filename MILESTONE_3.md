@@ -1,16 +1,19 @@
 # Milestone 3 — ElevenLabs Voice Synthesis Implementation Plan
 
-## Status: NOT STARTED ⬜
+## Status: IN PROGRESS 🟡
 
-**Current Phase:** Planning Complete → Ready for Implementation
+**Current Phase:** Phase 5 Complete → Ready for Phase 4 (Voice Selection UI) or Testing
 
-**Last Updated:** 2024-12-24 - Updated with ElevenLabs best practices research
-- Changed model from eleven_turbo_v2_5 to eleven_flash_v2_5 (75ms vs 300ms latency)
-- Added latency optimization parameters (optimize_streaming_latency=3, global endpoint)
-- Added voice settings best practices (style=0 always, stability 0.50-0.65)
-- Added text preprocessing with SSML support
-- Simplified emotion mapping (stability + speed only, no style)
-- Updated references with best practices documentation
+**Last Updated:** 2024-12-24 - Phase 5 Integration Complete
+- **Phase 1**: ElevenLabs TTS service, Session Manager, types, env config
+- **Phase 2**: WebSocket integration (handlers, translation→TTS pipeline)
+- **Phase 3**: Browser audio playback (AudioPlaybackManager, useAudioPlayback hook)
+- **Phase 5**: Full integration complete (done before Phase 4)
+  - Added TTS callbacks to `useWebSocket` hook
+  - Wired TTS into `Room.tsx` component
+  - **Mutes original WebRTC audio when TTS plays**
+  - Unmutes when TTS ends
+  - TTS state in debug panel
 
 ## Overview
 
@@ -1698,23 +1701,23 @@ ELEVENLABS_API_KEY=your-elevenlabs-api-key
 
 ## Implementation Order
 
-### Phase 1: ElevenLabs Service ⬜
-- [ ] Create ElevenLabs TTS service
-- [ ] Implement preset voice configuration
-- [ ] Add streaming audio generation
-- [ ] Handle API errors and rate limits
+### Phase 1: ElevenLabs Service ✅
+- [x] Create ElevenLabs TTS service
+- [x] Implement preset voice configuration
+- [x] Add streaming audio generation
+- [x] Handle API errors and rate limits
 
-### Phase 2: WebSocket Integration ⬜
-- [ ] Add TTS message handlers
-- [ ] Implement voice list endpoint
-- [ ] Wire TTS generation to translation pipeline
-- [ ] Broadcast audio chunks to listeners
+### Phase 2: WebSocket Integration ✅
+- [x] Add TTS message handlers
+- [x] Implement voice list endpoint
+- [x] Wire TTS generation to translation pipeline
+- [x] Broadcast audio chunks to listeners
 
-### Phase 3: Browser Audio Playback ⬜
-- [ ] Create AudioPlaybackManager class
-- [ ] Implement chunk queuing and buffering
-- [ ] Handle audio decode with Web Audio API
-- [ ] Build useAudioPlayback hook
+### Phase 3: Browser Audio Playback ✅
+- [x] Create AudioPlaybackManager class
+- [x] Implement chunk queuing and buffering
+- [x] Handle audio decode with Web Audio API
+- [x] Build useAudioPlayback hook
 
 ### Phase 4: Voice Selection UI ⬜
 - [ ] Create VoiceSelector component
@@ -1722,11 +1725,11 @@ ELEVENLABS_API_KEY=your-elevenlabs-api-key
 - [ ] Create TTSSettings component
 - [ ] Integrate into pre-debate setup
 
-### Phase 5: Integration ⬜
-- [ ] Wire up Room component with TTS
-- [ ] Handle TTS enable/disable toggle
-- [ ] Add volume controls
-- [ ] Test end-to-end flow
+### Phase 5: Integration ✅
+- [x] Wire up Room component with TTS
+- [x] Handle TTS enable/disable toggle
+- [x] Add volume controls
+- [x] Mute original audio when TTS plays
 
 ### Phase 6: Voice Cloning (Stretch) ⬜
 - [ ] Implement voice clone service

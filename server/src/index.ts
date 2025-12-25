@@ -8,6 +8,7 @@ import { geminiSttService } from './stt/geminiStt.js';
 import { translationService } from './translation/geminiTranslation.js';
 import { argumentExtractor } from './flow/argumentExtractor.js';
 import { ballotGenerator } from './flow/ballotGenerator.js';
+import { elevenLabsTTS } from './tts/elevenLabsTts.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -31,9 +32,15 @@ const translationReady = translationService.initialize();
 const extractorReady = argumentExtractor.initialize();
 const ballotReady = ballotGenerator.initialize();
 
-console.log(`[Services] STT: ${sttReady ? '✓' : '✗'}, Translation: ${translationReady ? '✓' : '✗'}, Extractor: ${extractorReady ? '✓' : '✗'}, Ballot: ${ballotReady ? '✓' : '✗'}`);
+// Initialize ElevenLabs TTS service
+const ttsReady = elevenLabsTTS.initialize();
+
+console.log(`[Services] STT: ${sttReady ? '✓' : '✗'}, Translation: ${translationReady ? '✓' : '✗'}, Extractor: ${extractorReady ? '✓' : '✗'}, Ballot: ${ballotReady ? '✓' : '✗'}, TTS: ${ttsReady ? '✓' : '✗'}`);
 if (!sttReady) {
   console.log('[Services] Set GEMINI_API_KEY to enable all Gemini services');
+}
+if (!ttsReady) {
+  console.log('[Services] Set ELEVENLABS_API_KEY to enable voice synthesis');
 }
 
 // Start server
