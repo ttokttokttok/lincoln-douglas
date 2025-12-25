@@ -178,17 +178,32 @@ class AudioPlaybackManager {
       const duration = audioBuffer.duration;
       console.log(`[AudioPlayback] Playing ${duration.toFixed(2)}s of audio for ${speakerId}`);
 
-      // Cleanup when done
+      // Cleanup when done - IMPORTANT: Reset ALL state so next TTS can play
       source.onended = () => {
         speakerState.currentSource = null;
         speakerState.isPlaying = false;
-        console.log(`[AudioPlayback] Playback complete for ${speakerId}`);
+        speakerState.playbackStarted = false;  // Reset so next TTS can play!
+        // Clear accumulated chunks so they don't interfere with next TTS
+        speakerState.accumulated = {
+          chunks: [],
+          totalBytes: 0,
+          firstChunkTime: 0,
+          isComplete: false,
+        };
+        console.log(`[AudioPlayback] Playback complete for ${speakerId}, state reset`);
       };
 
     } catch (error) {
       console.error('[AudioPlayback] Error decoding accumulated audio:', error);
+      // Reset ALL state on error so next TTS can try
       speakerState.isPlaying = false;
       speakerState.playbackStarted = false;
+      speakerState.accumulated = {
+        chunks: [],
+        totalBytes: 0,
+        firstChunkTime: 0,
+        isComplete: false,
+      };
     }
   }
 

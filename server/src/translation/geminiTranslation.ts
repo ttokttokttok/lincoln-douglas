@@ -77,6 +77,17 @@ class GeminiTranslationService {
       };
     }
 
+    // IMPORTANT: Skip translation for very short/empty text to prevent Gemini from generating content
+    // Gemini sometimes "fills in" content when given minimal input like "." or single characters
+    const trimmedText = text.trim();
+    if (trimmedText.length < 3 || /^[.\s,!?]+$/.test(trimmedText)) {
+      console.log(`[Translation] Skipping minimal text: "${trimmedText}"`);
+      return {
+        translatedText: trimmedText,
+        latencyMs: 0,
+      };
+    }
+
     const startTime = Date.now();
 
     const prompt = this.buildTranslationPrompt(text, sourceLanguage, targetLanguage, context);
@@ -118,22 +129,17 @@ class GeminiTranslationService {
       '2AR': 'Second Affirmative Rebuttal',
     };
 
-    return `You are a real-time debate translator for a Lincoln-Douglas debate. Translate the following speech segment from ${sourceName} to ${targetName}.
+    return `Translate this ${sourceName} text to ${targetName}. This is from a Lincoln-Douglas debate.
 
-CONTEXT:
-- Debate Resolution: "${context.resolution}"
-- Current Speech: ${speechNames[context.currentSpeech]} (${sideName} side)
-- Speaker: ${context.speakerName}
+CRITICAL RULES:
+- Output ONLY the direct translation of the input text
+- NEVER generate, add, or invent any content not present in the original
+- NEVER add arguments, examples, or elaborations
+- If the input is short (e.g., "Yes", "Thank you"), translate it literally - do NOT expand it
+- Preserve debate terminology: impact, turn, link, warrant, contention, value, criterion
+- Output ONLY the translation - no quotes, labels, or explanations
 
-REQUIREMENTS:
-- Preserve rhetorical force and argumentation structure
-- Maintain debate terminology (e.g., "impact", "turn", "link", "warrant", "contention", "value", "criterion")
-- Keep emotional intensity markers (emphatic phrases, rhetorical questions)
-- Translate idioms to culturally equivalent expressions
-- Be concise — this is real-time translation, latency matters
-- Output ONLY the translation, no explanations, notes, or quotes
-
-TEXT TO TRANSLATE:
+INPUT TEXT:
 ${text}
 
 TRANSLATION:`;

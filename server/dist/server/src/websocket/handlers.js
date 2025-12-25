@@ -668,10 +668,11 @@ function generateTTSForListeners(roomId, speakerId, speechId, translatedText, ta
     if (!room)
         return;
     // Find listeners who need this translation (those whose listeningLanguage matches targetLanguage)
-    // IMPORTANT: Exclude the current speaker - they shouldn't hear TTS while it's their turn
+    // IMPORTANT: Exclude the speaker - they shouldn't hear TTS of their own speech
+    // We only check speakerId (not currentSpeaker) because the listener SHOULD hear TTS
+    // even if it's currently the listener's turn to speak (during transitions, etc.)
     const listeners = Array.from(room.participants.values())
-        .filter(p => p.id !== speakerId && // Not the person speaking this text
-        p.id !== room.currentSpeaker && // Not the person whose turn it is to speak
+        .filter(p => p.id !== speakerId && // Not the person who spoke this text
         p.listeningLanguage === targetLanguage // Wants to hear in this language
     );
     if (listeners.length === 0) {
