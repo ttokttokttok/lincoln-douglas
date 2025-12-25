@@ -16,20 +16,21 @@ export function TTSSettings({
       <div className="flex items-center justify-between">
         <div>
           <label className="text-sm font-medium text-gray-300">
-            Voice Synthesis
+            Hear Opponent
           </label>
           <p className="text-xs text-gray-500 mt-0.5">
-            Hear translated speech aloud
+            {enabled ? 'Hearing TTS translations' : 'Opponent muted'}
           </p>
         </div>
         <button
           onClick={() => onEnabledChange(!enabled)}
           className={`
             relative inline-flex h-6 w-11 items-center rounded-full transition-colors
-            ${enabled ? 'bg-purple-600' : 'bg-gray-600'}
+            ${enabled ? 'bg-purple-600' : 'bg-red-600'}
           `}
           role="switch"
           aria-checked={enabled}
+          title={enabled ? 'Click to mute opponent' : 'Click to hear opponent'}
         >
           <span
             className={`

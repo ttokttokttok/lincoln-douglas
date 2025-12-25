@@ -14,7 +14,6 @@ import { BallotDisplay } from '../components/BallotDisplay';
 import { LanguageSelector } from '../components/LanguageSelector';
 import { VoiceSelector } from '../components/VoiceSelector';
 import { TTSSettings } from '../components/TTSSettings';
-import { DeafenToggle } from '../components/DeafenToggle';
 import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload, type TimeoutWarningPayload, type TimeoutEndPayload, type VoiceConfig } from '@shared/types';
 
 export function Room() {
@@ -35,12 +34,9 @@ export function Room() {
   // Timeout warning state
   const [timeoutWarning, setTimeoutWarning] = useState<TimeoutWarningPayload | null>(null);
 
-  // TTS state (Milestone 3)
+  // TTS state (Milestone 3) - controls hearing opponent's translated speech
   const [ttsEnabled, setTtsEnabled] = useState(true);
   const [ttsVolume, setTtsVolume] = useState(1.0);
-
-  // Deafen state - mute opponent's raw WebRTC audio
-  const [isOpponentDeafened, setIsOpponentDeafened] = useState(false);
 
   // Voice selection state
   const [availableVoices, setAvailableVoices] = useState<VoiceConfig[]>([]);
@@ -210,34 +206,35 @@ export function Room() {
     }
   }, [selectedVoiceId]);
 
-  // Track if TTS is currently playing (for deafen logic)
-  const isTTSPlayingRef = useRef(false);
+  // Auto-mute raw audio based on language mismatch
+  // If opponent speaks a different language than my listening language, mute their raw audio
+  const shouldMuteRawAudio = useCallback(() => {
+    if (!room || !myParticipantId) return false;
+    const myParticipant = room.participants.find(p => p.id === myParticipantId);
+    const opponent = room.participants.find(p => p.id !== myParticipantId);
+    if (!myParticipant || !opponent) return false;
 
-  // Mute/unmute remote audio - respects both TTS playback and deafen state
-  // Audio is muted if: deafened OR TTS is playing
-  // Audio is unmuted if: NOT deafened AND TTS is not playing
-  const updateRemoteAudioMute = useCallback(() => {
+    // Mute if opponent's speaking language differs from my listening language
+    return opponent.speakingLanguage !== myParticipant.listeningLanguage;
+  }, [room, myParticipantId]);
+
+  // Apply raw audio muting based on language
+  useEffect(() => {
     if (remoteStream) {
-      const shouldMute = isOpponentDeafened || isTTSPlayingRef.current;
+      const shouldMute = shouldMuteRawAudio();
       remoteStream.getAudioTracks().forEach(track => {
         track.enabled = !shouldMute;
       });
-      console.log(`[Room] Remote audio ${shouldMute ? 'muted' : 'unmuted'} (deafened: ${isOpponentDeafened}, TTS: ${isTTSPlayingRef.current})`);
+      console.log(`[Room] Raw audio ${shouldMute ? 'muted (different language)' : 'enabled (same language)'}`);
     }
-  }, [remoteStream, isOpponentDeafened]);
+  }, [remoteStream, shouldMuteRawAudio, room]);
 
-  // Legacy function for TTS callbacks - updates ref and applies mute
-  const muteRemoteAudio = useCallback((mute: boolean) => {
-    isTTSPlayingRef.current = mute;
-    updateRemoteAudioMute();
-  }, [updateRemoteAudioMute]);
+  // No-op for TTS callbacks (raw audio muting is now automatic)
+  const muteRemoteAudio = useCallback((_mute: boolean) => {
+    // Raw audio muting is now handled by language detection, not TTS state
+  }, []);
 
-  // Apply deafen state changes immediately
-  useEffect(() => {
-    updateRemoteAudioMute();
-  }, [isOpponentDeafened, updateRemoteAudioMute]);
-
-  // TTS playback hook
+  // TTS playback hook - plays translated speech from opponent
   const {
     isPlaying: isTTSPlaying,
     handleAudioChunk: handleTTSAudioChunk,
@@ -246,7 +243,7 @@ export function Room() {
     setVolume: setTTSPlaybackVolume,
     initialize: initializeTTS,
   } = useAudioPlayback({
-    enabled: ttsEnabled,
+    enabled: ttsEnabled,  // "Hear Opponent" toggle controls this
     onPlaybackStart: (speakerId) => {
       console.log('[Room] TTS playback started for', speakerId);
       muteRemoteAudio(true);
@@ -605,9 +602,21 @@ export function Room() {
         {/* Live Transcript - Only show during debate */}
         {room?.status === 'in_progress' && (
           <div className="mb-4">
-            <TranscriptPanel 
-              myParticipantId={myParticipantId} 
+            <TranscriptPanel
+              myParticipantId={myParticipantId}
               myLanguage={myParticipant?.listeningLanguage}
+            />
+          </div>
+        )}
+
+        {/* Audio Controls - Show during debate */}
+        {room?.status === 'in_progress' && (
+          <div className="mb-4">
+            <TTSSettings
+              enabled={ttsEnabled}
+              onEnabledChange={setTtsEnabled}
+              volume={ttsVolume}
+              onVolumeChange={setTtsVolume}
             />
           </div>
         )}
@@ -784,22 +793,13 @@ export function Room() {
               />
             </div>
 
-            {/* TTS Settings */}
+            {/* Hear Opponent Settings (TTS) */}
             <div className="mt-4">
               <TTSSettings
                 enabled={ttsEnabled}
                 onEnabledChange={setTtsEnabled}
                 volume={ttsVolume}
                 onVolumeChange={setTtsVolume}
-              />
-            </div>
-
-            {/* Deafen Toggle */}
-            <div className="mt-4">
-              <DeafenToggle
-                isDeafened={isOpponentDeafened}
-                onDeafenChange={setIsOpponentDeafened}
-                disabled={!remoteStream}
               />
             </div>
 
