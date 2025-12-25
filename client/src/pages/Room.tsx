@@ -12,7 +12,9 @@ import { Timer } from '../components/Timer';
 import { TranscriptPanel } from '../components/TranscriptPanel';
 import { BallotDisplay } from '../components/BallotDisplay';
 import { LanguageSelector } from '../components/LanguageSelector';
-import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload, type TimeoutWarningPayload, type TimeoutEndPayload } from '@shared/types';
+import { VoiceSelector } from '../components/VoiceSelector';
+import { TTSSettings } from '../components/TTSSettings';
+import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload, type TimeoutWarningPayload, type TimeoutEndPayload, type VoiceConfig } from '@shared/types';
 
 export function Room() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -33,8 +35,13 @@ export function Room() {
   const [timeoutWarning, setTimeoutWarning] = useState<TimeoutWarningPayload | null>(null);
 
   // TTS state (Milestone 3)
-  const [ttsEnabled, _setTtsEnabled] = useState(true);
-  const [ttsVolume, _setTtsVolume] = useState(1.0);
+  const [ttsEnabled, setTtsEnabled] = useState(true);
+  const [ttsVolume, setTtsVolume] = useState(1.0);
+
+  // Voice selection state
+  const [availableVoices, setAvailableVoices] = useState<VoiceConfig[]>([]);
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [voicesLoading, setVoicesLoading] = useState(false);
 
   // Track if we're the initiator (first to join with stream ready)
   const isInitiatorRef = useRef(false);
@@ -187,6 +194,17 @@ export function Room() {
     alert(payload.message);
   }, []);
 
+  // Handle voice list received
+  const handleVoiceList = useCallback((voices: VoiceConfig[], language: LanguageCode) => {
+    console.log('[Room] Received', voices.length, 'voices for', language);
+    setAvailableVoices(voices);
+    setVoicesLoading(false);
+    // Auto-select first voice if none selected
+    if (!selectedVoiceId && voices.length > 0) {
+      setSelectedVoiceId(voices[0].voiceId);
+    }
+  }, [selectedVoiceId]);
+
   // Mute/unmute remote audio when TTS is playing
   const muteRemoteAudio = useCallback((mute: boolean) => {
     if (remoteStream) {
@@ -283,6 +301,9 @@ export function Room() {
     startAudioStream,
     sendAudioChunk,
     stopAudioStream,
+    // Voice selection (Milestone 3)
+    requestVoiceList,
+    selectVoice,
   } = useWebSocket({
     roomCode: roomId || '',
     displayName,
@@ -294,6 +315,7 @@ export function Room() {
     onTTSStart: handleTTSStart,
     onTTSChunk: handleTTSChunk,
     onTTSEnd: handleTTSEnd,
+    onVoiceList: handleVoiceList,
     // Timeout callbacks
     onTimeoutWarning: handleTimeoutWarning,
     onTimeoutEnd: handleTimeoutEnd,
@@ -434,6 +456,21 @@ export function Room() {
       const listening = type === 'listening' ? lang : myParticipant.listeningLanguage;
       setLanguages(speaking, listening);
     }
+  };
+
+  // Request voices when speaking language changes
+  useEffect(() => {
+    if (myParticipant?.speakingLanguage && isConnected) {
+      setVoicesLoading(true);
+      setSelectedVoiceId(null); // Reset selection when language changes
+      requestVoiceList(myParticipant.speakingLanguage);
+    }
+  }, [myParticipant?.speakingLanguage, isConnected, requestVoiceList]);
+
+  // Handle voice selection
+  const handleVoiceSelect = (voiceId: string) => {
+    setSelectedVoiceId(voiceId);
+    selectVoice(voiceId);
   };
 
   // Handle ready toggle
@@ -703,6 +740,33 @@ export function Room() {
                 label="I want to hear:"
                 value={myParticipant?.listeningLanguage || 'en'}
                 onChange={(code) => handleLanguageChange('listening', code)}
+              />
+            </div>
+
+            {/* Voice Selection */}
+            <div className="mt-4">
+              <h4 className="text-sm font-medium text-gray-300 mb-1">
+                Your debate voice
+              </h4>
+              <p className="text-xs text-gray-500 mb-3">
+                How your opponent hears you when translated
+              </p>
+              <VoiceSelector
+                voices={availableVoices}
+                selectedVoiceId={selectedVoiceId}
+                onSelect={handleVoiceSelect}
+                loading={voicesLoading}
+                disabled={myParticipant?.isReady}
+              />
+            </div>
+
+            {/* TTS Settings */}
+            <div className="mt-4">
+              <TTSSettings
+                enabled={ttsEnabled}
+                onEnabledChange={setTtsEnabled}
+                volume={ttsVolume}
+                onVolumeChange={setTtsVolume}
               />
             </div>
 
