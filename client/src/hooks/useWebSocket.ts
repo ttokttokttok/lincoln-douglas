@@ -9,6 +9,9 @@ import type {
   SpeechStartPayload,
   SpeechRole,
   Side,
+  LanguageCode,
+  STTFinalPayload,
+  TranslationCompletePayload,
 } from '@shared/types';
 
 const WS_URL = 'ws://localhost:3001/ws';
@@ -20,16 +23,39 @@ interface SignalMessage {
   signal: unknown;
 }
 
+// Transcript message from STT
+export interface TranscriptMessage {
+  speakerId: string;
+  speakerName: string;
+  speechId: SpeechRole;
+  text: string;
+  language: LanguageCode;
+  confidence: number;
+}
+
+// Translation message
+export interface TranslationMessage {
+  speakerId: string;
+  speakerName: string;
+  originalText: string;
+  originalLanguage: LanguageCode;
+  translatedText: string;
+  targetLanguage: LanguageCode;
+  latencyMs: number;
+}
+
 interface UseWebSocketOptions {
   roomCode: string;
   displayName: string;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onSignal?: (message: SignalMessage) => void;
+  onTranscript?: (transcript: TranscriptMessage) => void;
+  onTranslation?: (translation: TranslationMessage) => void;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
-  const { roomCode, displayName, onConnect, onDisconnect, onSignal } = options;
+  const { roomCode, displayName, onConnect, onDisconnect, onSignal, onTranscript, onTranslation } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -111,13 +137,42 @@ export function useWebSocket(options: UseWebSocketOptions) {
           break;
         }
 
+        case 'stt:final': {
+          const payload = message.payload as STTFinalPayload;
+          console.log('[WS] Transcript:', payload.text.substring(0, 50) + (payload.text.length > 50 ? '...' : ''));
+          onTranscript?.({
+            speakerId: payload.speakerId,
+            speakerName: payload.speakerName || 'Unknown',
+            speechId: payload.speechId as SpeechRole,
+            text: payload.text,
+            language: payload.language,
+            confidence: payload.confidence,
+          });
+          break;
+        }
+
+        case 'translation:complete': {
+          const payload = message.payload as TranslationCompletePayload;
+          console.log('[WS] Translation:', payload.translatedText.substring(0, 50) + (payload.translatedText.length > 50 ? '...' : ''));
+          onTranslation?.({
+            speakerId: payload.speakerId,
+            speakerName: payload.speakerName,
+            originalText: payload.originalText,
+            originalLanguage: payload.originalLanguage,
+            translatedText: payload.translatedText,
+            targetLanguage: payload.targetLanguage,
+            latencyMs: payload.latencyMs,
+          });
+          break;
+        }
+
         default:
           console.log('[WS] Unhandled message type:', message.type);
       }
     } catch (error) {
       console.error('[WS] Failed to parse message:', error);
     }
-  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal]);
+  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation]);
 
   // Send a message
   const send = useCallback((type: WSMessageType, payload: unknown) => {
@@ -283,6 +338,21 @@ export function useWebSocket(options: UseWebSocketOptions) {
     send('signal:ice', { targetId, signal });
   }, [send]);
 
+  // Audio streaming (Milestone 2)
+  const startAudioStream = useCallback((speechId: string, language: LanguageCode) => {
+    send('audio:start', { speechId, language });
+    console.log('[WS] Started audio stream for', speechId);
+  }, [send]);
+
+  const sendAudioChunk = useCallback((audioData: string, speechId: string) => {
+    send('audio:chunk', { audioData, timestamp: Date.now(), speechId });
+  }, [send]);
+
+  const stopAudioStream = useCallback((speechId: string) => {
+    send('audio:stop', { speechId });
+    console.log('[WS] Stopped audio stream for', speechId);
+  }, [send]);
+
   return {
     send,
     connect,
@@ -300,5 +370,9 @@ export function useWebSocket(options: UseWebSocketOptions) {
     sendSignal,
     sendAnswer,
     sendIceCandidate,
+    // Audio streaming (Milestone 2)
+    startAudioStream,
+    sendAudioChunk,
+    stopAudioStream,
   };
 }

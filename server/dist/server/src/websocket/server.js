@@ -138,6 +138,11 @@ class SignalingServer {
         });
         return clientIds;
     }
+    // Get client's room ID
+    getClientRoomId(clientId) {
+        const client = this.clients.get(clientId);
+        return client?.roomId;
+    }
 }
 let signalingServer = null;
 export function setupWebSocketServer(server) {

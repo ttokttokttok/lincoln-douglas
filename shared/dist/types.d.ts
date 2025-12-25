@@ -33,7 +33,7 @@ export interface TimerState {
     isPrepTime: boolean;
     prepSide: Side | null;
 }
-export type WSMessageType = 'room:create' | 'room:join' | 'room:leave' | 'room:state' | 'room:ready' | 'room:start' | 'room:error' | 'participant:update' | 'participant:joined' | 'participant:left' | 'signal:offer' | 'signal:answer' | 'signal:ice' | 'timer:update' | 'timer:start' | 'timer:pause' | 'speech:start' | 'speech:end' | 'prep:start' | 'prep:end' | 'error';
+export type WSMessageType = 'room:create' | 'room:join' | 'room:leave' | 'room:state' | 'room:ready' | 'room:start' | 'room:error' | 'participant:update' | 'participant:joined' | 'participant:left' | 'signal:offer' | 'signal:answer' | 'signal:ice' | 'timer:update' | 'timer:start' | 'timer:pause' | 'speech:start' | 'speech:end' | 'prep:start' | 'prep:end' | 'error' | 'audio:start' | 'audio:chunk' | 'audio:stop' | 'stt:interim' | 'stt:final' | 'translation:interim' | 'translation:complete' | 'flow:argument' | 'flow:state' | 'ballot:ready' | 'latency:update';
 export interface WSMessage<T = unknown> {
     type: WSMessageType;
     payload: T;
@@ -70,6 +70,59 @@ export interface PrepStartPayload {
 export interface ErrorPayload {
     message: string;
     code?: string;
+}
+export interface AudioStartPayload {
+    speechId: string;
+    language: LanguageCode;
+}
+export interface AudioChunkPayload {
+    audioData: string;
+    timestamp: number;
+    speechId: string;
+}
+export interface AudioStopPayload {
+    speechId: string;
+}
+export interface WordTimestamp {
+    word: string;
+    startTime: number;
+    endTime: number;
+    confidence: number;
+}
+export interface STTInterimPayload {
+    speakerId: string;
+    speechId: string;
+    text: string;
+    language: LanguageCode;
+}
+export interface STTFinalPayload {
+    speakerId: string;
+    speechId: string;
+    text: string;
+    language: LanguageCode;
+    confidence: number;
+    wordTimestamps?: WordTimestamp[];
+}
+export interface TranslationInterimPayload {
+    speakerId: string;
+    speechId: string;
+    originalText: string;
+    originalLanguage: LanguageCode;
+    translatedText: string;
+    targetLanguage: LanguageCode;
+}
+export interface TranslationCompletePayload {
+    speakerId: string;
+    speechId: string;
+    originalText: string;
+    originalLanguage: LanguageCode;
+    translatedText: string;
+    targetLanguage: LanguageCode;
+    latencyMs: number;
+}
+export interface LatencyUpdatePayload {
+    sttLatencyMs: number;
+    translationLatencyMs: number;
 }
 export interface LanguageInfo {
     code: LanguageCode;

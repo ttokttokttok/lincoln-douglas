@@ -1,11 +1,38 @@
 import { SPEECH_ORDER, SPEECH_SIDES } from '@shared/types';
 import { roomManager } from '../rooms/manager.js';
 import { debateManager } from '../timer/debateController.js';
+import { audioSessionManager } from '../audio/sessionManager.js';
+import { geminiSttService } from '../stt/geminiStt.js';
 // Store server reference for callbacks
 let serverRef = null;
-// Initialize debate callbacks
+// Initialize debate callbacks and STT callbacks
 export function initializeDebateCallbacks(server) {
     serverRef = server;
+    // Set up STT transcription callback
+    geminiSttService.setTranscriptionCallback((participantId, result) => {
+        // Find the room for this participant
+        const roomId = server.getClientRoomId(participantId);
+        if (!roomId)
+            return;
+        const room = roomManager.getRoom(roomId);
+        const participant = room?.participants.get(participantId);
+        if (!room || !participant)
+            return;
+        // Get current speech
+        const currentSpeech = room.currentSpeech || 'AC';
+        // Broadcast transcript to all participants in the room
+        server.broadcastToRoomAll(roomId, {
+            type: 'stt:final',
+            payload: {
+                speakerId: participantId,
+                speechId: currentSpeech,
+                text: result.text,
+                language: result.language,
+                confidence: result.confidence,
+            },
+        });
+        console.log(`[STT] ${participant.displayName}: "${result.text.substring(0, 50)}${result.text.length > 50 ? '...' : ''}"`);
+    });
     debateManager.setCallbacks({
         onTimerUpdate: (roomId, timer) => {
             server.broadcastToRoomAll(roomId, {
@@ -63,7 +90,10 @@ export function initializeDebateCallbacks(server) {
     });
 }
 export function handleMessage(client, message, server) {
-    console.log(`Message from ${client.id}:`, message.type);
+    // Don't log high-frequency audio chunks (logged separately in sessionManager)
+    if (message.type !== 'audio:chunk') {
+        console.log(`Message from ${client.id}:`, message.type);
+    }
     switch (message.type) {
         case 'room:create':
             handleRoomCreate(client, message.payload, server);
@@ -106,6 +136,16 @@ export function handleMessage(client, message, server) {
             break;
         case 'prep:end':
             handlePrepEnd(client, server);
+            break;
+        // Audio streaming messages (Milestone 2)
+        case 'audio:start':
+            handleAudioStart(client, message.payload, server);
+            break;
+        case 'audio:chunk':
+            handleAudioChunk(client, message.payload, server);
+            break;
+        case 'audio:stop':
+            handleAudioStop(client, message.payload, server);
             break;
         default:
             console.warn(`Unknown message type: ${message.type}`);
@@ -378,5 +418,64 @@ function handlePrepEnd(client, server) {
         return;
     }
     debateManager.endPrep(client.roomId);
+}
+// ==========================================
+// Audio Streaming Handlers (Milestone 2)
+// ==========================================
+/**
+ * Start audio streaming for a speech
+ */
+function handleAudioStart(client, payload, server) {
+    if (!client.roomId) {
+        server.sendError(client.id, 'Not in a room');
+        return;
+    }
+    const room = roomManager.getRoom(client.roomId);
+    const participant = room?.participants.get(client.id);
+    if (!participant) {
+        server.sendError(client.id, 'Participant not found');
+        return;
+    }
+    // Start audio session
+    const session = audioSessionManager.startSession(client.roomId, client.id, payload.speechId, payload.language);
+    // Start STT session
+    if (geminiSttService.isReady()) {
+        geminiSttService.startSession(client.id, session.sessionId, payload.language);
+    }
+    console.log(`[Audio] Started streaming from ${participant.displayName} (${payload.language})`);
+}
+/**
+ * Process incoming audio chunk
+ */
+function handleAudioChunk(client, payload, server) {
+    if (!client.roomId) {
+        return; // Silently ignore if not in room
+    }
+    // Decode base64 audio data
+    const audioBuffer = Buffer.from(payload.audioData, 'base64');
+    // Process the chunk through session manager
+    audioSessionManager.processChunk(client.id, audioBuffer);
+    // Forward to STT service for transcription
+    if (geminiSttService.isReady()) {
+        geminiSttService.addAudioChunk(client.id, audioBuffer);
+    }
+}
+/**
+ * Stop audio streaming
+ */
+async function handleAudioStop(client, payload, server) {
+    if (!client.roomId) {
+        return;
+    }
+    const session = audioSessionManager.endSession(client.id);
+    if (session) {
+        const room = roomManager.getRoom(client.roomId);
+        const participant = room?.participants.get(client.id);
+        console.log(`[Audio] Stopped streaming from ${participant?.displayName || client.id}`);
+    }
+    // End STT session (will flush any remaining audio)
+    if (geminiSttService.isReady()) {
+        await geminiSttService.endSession(client.id);
+    }
 }
 //# sourceMappingURL=handlers.js.map

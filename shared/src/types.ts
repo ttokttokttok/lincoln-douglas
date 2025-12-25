@@ -69,7 +69,24 @@ export type WSMessageType =
   | 'speech:end'
   | 'prep:start'
   | 'prep:end'
-  | 'error';
+  | 'error'
+  // Audio streaming (Milestone 2)
+  | 'audio:start'
+  | 'audio:chunk'
+  | 'audio:stop'
+  // STT results (Milestone 2)
+  | 'stt:interim'
+  | 'stt:final'
+  // Translation results (Milestone 2)
+  | 'translation:interim'
+  | 'translation:complete'
+  // Flow/Arguments (Milestone 2)
+  | 'flow:argument'
+  | 'flow:state'
+  // Ballot (Milestone 2)
+  | 'ballot:ready'
+  // Latency metrics (Milestone 2)
+  | 'latency:update';
 
 // Base WebSocket message
 export interface WSMessage<T = unknown> {
@@ -118,6 +135,79 @@ export interface PrepStartPayload {
 export interface ErrorPayload {
   message: string;
   code?: string;
+}
+
+// ==========================================
+// Milestone 2: Audio/STT/Translation Types
+// ==========================================
+
+// Audio streaming payloads
+export interface AudioStartPayload {
+  speechId: string;
+  language: LanguageCode;
+}
+
+export interface AudioChunkPayload {
+  audioData: string;  // Base64 encoded PCM (16-bit, 16kHz, mono)
+  timestamp: number;
+  speechId: string;
+}
+
+export interface AudioStopPayload {
+  speechId: string;
+}
+
+// Word-level timestamp from STT
+export interface WordTimestamp {
+  word: string;
+  startTime: number;  // seconds
+  endTime: number;    // seconds
+  confidence: number;
+}
+
+// STT result payloads
+export interface STTInterimPayload {
+  speakerId: string;
+  speechId: string;
+  text: string;
+  language: LanguageCode;
+}
+
+export interface STTFinalPayload {
+  speakerId: string;
+  speakerName: string;
+  speechId: string;
+  text: string;
+  language: LanguageCode;
+  confidence: number;
+  wordTimestamps?: WordTimestamp[];
+}
+
+// Translation payloads
+export interface TranslationInterimPayload {
+  speakerId: string;
+  speechId: string;
+  originalText: string;
+  originalLanguage: LanguageCode;
+  translatedText: string;
+  targetLanguage: LanguageCode;
+}
+
+export interface TranslationCompletePayload {
+  speakerId: string;
+  speakerName: string;
+  speechId: string;
+  originalText: string;
+  originalLanguage: LanguageCode;
+  translatedText: string;
+  targetLanguage: LanguageCode;
+  latencyMs: number;
+}
+
+// Latency update payload
+export interface LatencyUpdatePayload {
+  sttLatencyMs: number;
+  translationLatencyMs: number;
 }
 
 // Language metadata

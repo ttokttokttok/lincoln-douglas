@@ -171,6 +171,12 @@ class SignalingServer {
     });
     return clientIds;
   }
+
+  // Get client's room ID
+  getClientRoomId(clientId: string): string | undefined {
+    const client = this.clients.get(clientId);
+    return client?.roomId;
+  }
 }
 
 let signalingServer: SignalingServer | null = null;

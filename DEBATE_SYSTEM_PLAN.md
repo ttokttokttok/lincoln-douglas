@@ -438,7 +438,9 @@ GET    /api/rooms/:roomId/recording  Get recording with all audio tracks
 - [x] Debate flow (AC → NC → 1AR → NR → 2AR, no CX)
 - [x] Permission controls (only speaker can end speech, only next speaker can start)
 
-### Milestone 2 — Real-Time Translation + Flow Sheet
+### Milestone 2 — Real-Time Translation + Flow Sheet 🔄 IN PROGRESS
+> **See [MILESTONE_2.md](./MILESTONE_2.md) for detailed implementation plan**
+
 - [ ] Google STT streaming integration (multi-language)
 - [ ] Gemini translation with debate context
 - [ ] Dual transcript display (original + translated)

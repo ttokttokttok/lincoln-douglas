@@ -6,18 +6,105 @@ import type {
   Side,
   SpeechRole,
   TimerState,
+  AudioStartPayload,
+  AudioChunkPayload,
+  AudioStopPayload,
+  LanguageCode,
 } from '@shared/types';
 import { SPEECH_ORDER, SPEECH_SIDES } from '@shared/types';
 import { roomManager } from '../rooms/manager.js';
 import { debateManager } from '../timer/debateController.js';
+import { audioSessionManager } from '../audio/sessionManager.js';
+import { geminiSttService } from '../stt/geminiStt.js';
+import { translationService } from '../translation/geminiTranslation.js';
 import type { ExtendedWebSocket, SignalingServer } from './server.js';
 
 // Store server reference for callbacks
 let serverRef: SignalingServer | null = null;
 
-// Initialize debate callbacks
+// Initialize debate callbacks and STT callbacks
 export function initializeDebateCallbacks(server: SignalingServer): void {
   serverRef = server;
+
+  // Set up STT transcription callback
+  geminiSttService.setTranscriptionCallback(async (participantId, result) => {
+    // Find the room for this participant
+    const roomId = server.getClientRoomId(participantId);
+    if (!roomId) return;
+
+    const room = roomManager.getRoom(roomId);
+    const participant = room?.participants.get(participantId);
+    if (!room || !participant) return;
+
+    // Get current speech
+    const currentSpeech = room.currentSpeech || 'AC';
+
+    // Broadcast transcript to all participants in the room
+    server.broadcastToRoomAll(roomId, {
+      type: 'stt:final',
+      payload: {
+        speakerId: participantId,
+        speakerName: participant.displayName,
+        speechId: currentSpeech,
+        text: result.text,
+        language: result.language,
+        confidence: result.confidence,
+      },
+    });
+
+    console.log(`[STT] ${participant.displayName}: "${result.text.substring(0, 50)}${result.text.length > 50 ? '...' : ''}"`);
+
+    // Translate for listeners who speak different languages
+    if (translationService.isReady()) {
+      // Find the other participant's language (the listener)
+      const otherParticipants = Array.from(room.participants.values())
+        .filter(p => p.id !== participantId);
+
+      // Get unique target languages based on what listeners want to hear
+      // Use listeningLanguage (what they want to hear) not speakingLanguage
+      const targetLanguages = [...new Set(
+        otherParticipants
+          .map(p => p.listeningLanguage)
+          .filter(lang => lang !== result.language)
+      )] as LanguageCode[];
+
+      // Translate to each unique target language
+      for (const targetLanguage of targetLanguages) {
+        try {
+          const translationResult = await translationService.translate(
+            result.text,
+            result.language,
+            targetLanguage,
+            {
+              resolution: room.resolution,
+              currentSpeech,
+              speakerSide: participant.side || 'AFF',
+              speakerName: participant.displayName,
+            }
+          );
+
+          if (translationResult) {
+            // Broadcast translation to all participants
+            server.broadcastToRoomAll(roomId, {
+              type: 'translation:complete',
+              payload: {
+                speakerId: participantId,
+                speakerName: participant.displayName,
+                speechId: currentSpeech,
+                originalText: result.text,
+                originalLanguage: result.language,
+                translatedText: translationResult.translatedText,
+                targetLanguage,
+                latencyMs: translationResult.latencyMs,
+              },
+            });
+          }
+        } catch (error) {
+          console.error('[Translation] Error translating:', error);
+        }
+      }
+    }
+  });
 
   debateManager.setCallbacks({
     onTimerUpdate: (roomId: string, timer: TimerState) => {
@@ -83,7 +170,10 @@ export function handleMessage(
   message: WSMessage,
   server: SignalingServer
 ): void {
-  console.log(`Message from ${client.id}:`, message.type);
+  // Don't log high-frequency audio chunks (logged separately in sessionManager)
+  if (message.type !== 'audio:chunk') {
+    console.log(`Message from ${client.id}:`, message.type);
+  }
 
   switch (message.type) {
     case 'room:create':
@@ -139,6 +229,19 @@ export function handleMessage(
 
     case 'prep:end':
       handlePrepEnd(client, server);
+      break;
+
+    // Audio streaming messages (Milestone 2)
+    case 'audio:start':
+      handleAudioStart(client, message.payload as AudioStartPayload, server);
+      break;
+
+    case 'audio:chunk':
+      handleAudioChunk(client, message.payload as AudioChunkPayload, server);
+      break;
+
+    case 'audio:stop':
+      handleAudioStop(client, message.payload as AudioStopPayload, server);
       break;
 
     default:
@@ -500,4 +603,95 @@ function handlePrepEnd(client: ExtendedWebSocket, server: SignalingServer): void
   }
 
   debateManager.endPrep(client.roomId);
+}
+
+// ==========================================
+// Audio Streaming Handlers (Milestone 2)
+// ==========================================
+
+/**
+ * Start audio streaming for a speech
+ */
+function handleAudioStart(
+  client: ExtendedWebSocket,
+  payload: AudioStartPayload,
+  server: SignalingServer
+): void {
+  if (!client.roomId) {
+    server.sendError(client.id, 'Not in a room');
+    return;
+  }
+
+  const room = roomManager.getRoom(client.roomId);
+  const participant = room?.participants.get(client.id);
+
+  if (!participant) {
+    server.sendError(client.id, 'Participant not found');
+    return;
+  }
+
+  // Start audio session
+  const session = audioSessionManager.startSession(
+    client.roomId,
+    client.id,
+    payload.speechId,
+    payload.language
+  );
+
+  // Start STT session
+  if (geminiSttService.isReady()) {
+    geminiSttService.startSession(client.id, session.sessionId, payload.language);
+  }
+
+  console.log(`[Audio] Started streaming from ${participant.displayName} (${payload.language})`);
+}
+
+/**
+ * Process incoming audio chunk
+ */
+function handleAudioChunk(
+  client: ExtendedWebSocket,
+  payload: AudioChunkPayload,
+  server: SignalingServer
+): void {
+  if (!client.roomId) {
+    return; // Silently ignore if not in room
+  }
+
+  // Decode base64 audio data
+  const audioBuffer = Buffer.from(payload.audioData, 'base64');
+
+  // Process the chunk through session manager
+  audioSessionManager.processChunk(client.id, audioBuffer);
+
+  // Forward to STT service for transcription
+  if (geminiSttService.isReady()) {
+    geminiSttService.addAudioChunk(client.id, audioBuffer);
+  }
+}
+
+/**
+ * Stop audio streaming
+ */
+async function handleAudioStop(
+  client: ExtendedWebSocket,
+  payload: AudioStopPayload,
+  server: SignalingServer
+): Promise<void> {
+  if (!client.roomId) {
+    return;
+  }
+
+  const session = audioSessionManager.endSession(client.id);
+
+  if (session) {
+    const room = roomManager.getRoom(client.roomId);
+    const participant = room?.participants.get(client.id);
+    console.log(`[Audio] Stopped streaming from ${participant?.displayName || client.id}`);
+  }
+
+  // End STT session (will flush any remaining audio)
+  if (geminiSttService.isReady()) {
+    await geminiSttService.endSession(client.id);
+  }
 }

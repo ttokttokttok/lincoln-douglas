@@ -1,12 +1,15 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useWebSocket, type TranscriptMessage, type TranslationMessage } from '../hooks/useWebSocket';
 import { useMediaStream } from '../hooks/useMediaStream';
+import { useAudioStream, arrayBufferToBase64 } from '../hooks/useAudioStream';
 import { usePeer, type SignalData } from '../hooks/usePeer';
 import { useRoomStore } from '../stores/roomStore';
+import { useTranscriptStore } from '../stores/transcriptStore';
 import { VideoPanel, VideoControls } from '../components/VideoPanel';
 import { Timer } from '../components/Timer';
-import type { LanguageCode, Side } from '@shared/types';
+import { TranscriptPanel } from '../components/TranscriptPanel';
+import type { LanguageCode, Side, SpeechRole } from '@shared/types';
 import { LANGUAGES } from '@shared/types';
 
 export function Room() {
@@ -129,6 +132,30 @@ export function Room() {
     await processSignal(signalData);
   }, [localStream, processSignal]);
 
+  // Transcript store
+  const { addTranscript, addTranslation } = useTranscriptStore();
+
+  // Handle incoming transcripts
+  const handleTranscript = useCallback((transcript: TranscriptMessage) => {
+    addTranscript({
+      speakerId: transcript.speakerId,
+      speakerName: transcript.speakerName,
+      speechId: transcript.speechId,
+      text: transcript.text,
+      language: transcript.language,
+      confidence: transcript.confidence,
+    });
+  }, [addTranscript]);
+
+  // Handle incoming translations
+  const handleTranslation = useCallback((translation: TranslationMessage) => {
+    addTranslation(translation.originalText, translation.speakerId, {
+      text: translation.translatedText,
+      language: translation.targetLanguage,
+      latencyMs: translation.latencyMs,
+    });
+  }, [addTranslation]);
+
   // WebSocket connection
   const {
     setReady,
@@ -142,14 +169,61 @@ export function Room() {
     sendSignal,
     sendAnswer,
     sendIceCandidate,
+    // Audio streaming (Milestone 2)
+    startAudioStream,
+    sendAudioChunk,
+    stopAudioStream,
   } = useWebSocket({
     roomCode: roomId || '',
     displayName,
     onSignal: handleSignal,
+    onTranscript: handleTranscript,
+    onTranslation: handleTranslation,
   });
 
   // Set signal senders ref for usePeer callback
   signalSendersRef.current = { sendSignal, sendAnswer, sendIceCandidate };
+
+  // Get my participant data (needed early for audio streaming)
+  const myParticipant = room?.participants.find(p => p.id === myParticipantId);
+
+  // Track current speech for audio streaming
+  const currentSpeechRef = useRef<SpeechRole | null>(null);
+
+  // Determine if current user is the active speaker
+  const isCurrentlySpeaking = room?.currentSpeaker === myParticipantId && room?.status === 'in_progress';
+
+  // Audio chunk handler - sends audio data through WebSocket
+  const handleAudioChunk = useCallback((chunk: ArrayBuffer) => {
+    if (currentSpeechRef.current) {
+      const base64Audio = arrayBufferToBase64(chunk);
+      sendAudioChunk(base64Audio, currentSpeechRef.current);
+    }
+  }, [sendAudioChunk]);
+
+  // Audio streaming hook
+  const {
+    isStreaming: isAudioStreaming,
+    isInitialized: isAudioInitialized,
+    error: audioError,
+  } = useAudioStream({
+    onAudioChunk: handleAudioChunk,
+    enabled: isCurrentlySpeaking,
+    mediaStream: localStream,
+  });
+
+  // Start/stop audio streaming based on speaking state
+  useEffect(() => {
+    if (isCurrentlySpeaking && room?.currentSpeech && myParticipant) {
+      // Start audio stream for this speech
+      currentSpeechRef.current = room.currentSpeech;
+      startAudioStream(room.currentSpeech, myParticipant.speakingLanguage);
+    } else if (!isCurrentlySpeaking && currentSpeechRef.current) {
+      // Stop audio stream when no longer speaking
+      stopAudioStream(currentSpeechRef.current);
+      currentSpeechRef.current = null;
+    }
+  }, [isCurrentlySpeaking, room?.currentSpeech, myParticipant?.speakingLanguage, startAudioStream, stopAudioStream]);
 
   // Redirect to lobby if no room code
   useEffect(() => {
@@ -212,8 +286,7 @@ export function Room() {
     }
   }, [localStream, room, myParticipantId, isPeerConnected, isPeerConnecting, createPeer]);
 
-  // Get my participant data
-  const myParticipant = room?.participants.find(p => p.id === myParticipantId);
+  // Get opponent data
   const opponent = room?.participants.find(p => p.id !== myParticipantId);
 
   // Connection status display
@@ -315,6 +388,16 @@ export function Room() {
               onStartPrep={startPrep}
               onEndPrep={endPrep}
               onStartNextSpeech={startNextSpeech}
+            />
+          </div>
+        )}
+
+        {/* Live Transcript - Only show during debate */}
+        {room?.status === 'in_progress' && (
+          <div className="mb-4">
+            <TranscriptPanel 
+              myParticipantId={myParticipantId} 
+              myLanguage={myParticipant?.listeningLanguage}
             />
           </div>
         )}
@@ -568,6 +651,8 @@ export function Room() {
             <p>Room: participants={room?.participants.length || 0}, status={room?.status || 'none'}</p>
             <p>Video: local={localStream ? 'yes' : 'no'}, remote={remoteStream ? 'yes' : 'no'}</p>
             <p>Peer: connected={String(isPeerConnected)}, connecting={String(isPeerConnecting)}</p>
+            <p>Audio: initialized={String(isAudioInitialized)}, streaming={String(isAudioStreaming)}, speaking={String(isCurrentlySpeaking)}</p>
+            {audioError && <p className="text-red-400">Audio Error: {audioError.message}</p>}
           </div>
         )}
       </div>
