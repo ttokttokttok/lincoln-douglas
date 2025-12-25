@@ -2,6 +2,8 @@ import type { SpeechRole, Side, TimerState, TimeoutReason } from '@shared/types'
 import { SPEECH_SIDES, SPEECH_ORDER } from '@shared/types';
 import { TimerController } from './controller.js';
 import { roomManager } from '../rooms/manager.js';
+import { botManager } from '../bot/botManager.js';
+import { getBotState, isBotTurn } from '../bot/botParticipant.js';
 
 // Timeout configuration
 const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;  // 10 minutes
@@ -28,6 +30,10 @@ interface DebateCallbacks {
   // Timeout callbacks
   onTimeoutWarning?: (roomId: string, reason: TimeoutReason, secondsRemaining: number) => void;
   onTimeoutEnd?: (roomId: string, reason: TimeoutReason) => void;
+  // Bot callbacks (Milestone 5)
+  onBotSpeechChunk?: (roomId: string, chunk: Buffer, index: number) => void;
+  onBotSpeechComplete?: (roomId: string, speech: SpeechRole) => void;
+  onBotSpeechError?: (roomId: string, error: Error) => void;
 }
 
 interface TimeoutTimers {
@@ -244,6 +250,13 @@ class DebateManager {
 
     this.callbacks?.onSpeechStart(roomId, 'AC', affParticipant.id);
 
+    // If the first speaker is a bot, trigger bot speech (Milestone 5)
+    if (affParticipant.isBot && room.mode === 'practice') {
+      console.log('[DebateController] First speaker is bot, triggering AC speech');
+      // Use setTimeout to allow the room state to be sent first
+      setTimeout(() => this.triggerBotSpeech(roomId, 'AC'), 500);
+    }
+
     return true;
   }
 
@@ -331,6 +344,14 @@ class DebateManager {
     debate.state.currentSpeech = nextSpeech;
 
     this.callbacks?.onSpeechStart(roomId, nextSpeech, speaker.id);
+
+    // If the next speaker is a bot, trigger bot speech (Milestone 5)
+    if (speaker.isBot && room.mode === 'practice') {
+      console.log(`[DebateController] Next speaker is bot, triggering ${nextSpeech} speech`);
+      // Use setTimeout to allow the room state to be sent first
+      setTimeout(() => this.triggerBotSpeech(roomId, nextSpeech), 500);
+    }
+
     return true;
   }
 
@@ -365,6 +386,63 @@ class DebateManager {
       debate.timer.destroy();
       this.debates.delete(roomId);
     }
+    // Clean up bot manager state
+    botManager.cleanupRoom(roomId);
+  }
+
+  /**
+   * Trigger bot speech for a given speech role
+   * Called when it's the bot's turn to speak
+   */
+  private async triggerBotSpeech(roomId: string, speech: SpeechRole): Promise<void> {
+    if (!botManager.isReady()) {
+      console.warn('[DebateController] Bot manager not ready');
+      return;
+    }
+
+    const room = roomManager.getRoom(roomId);
+    if (!room || room.mode !== 'practice') return;
+
+    const botState = getBotState(roomId);
+    if (!botState) return;
+
+    console.log(`[DebateController] Triggering bot speech for ${speech}`);
+
+    await botManager.triggerBotSpeech(
+      roomId,
+      speech,
+      // onChunk
+      (chunk, index) => {
+        this.callbacks?.onBotSpeechChunk?.(roomId, chunk, index);
+      },
+      // onComplete
+      () => {
+        console.log(`[DebateController] Bot speech ${speech} completed`);
+        this.callbacks?.onBotSpeechComplete?.(roomId, speech);
+
+        // End the bot's speech timer (they spoke their piece)
+        const debate = this.debates.get(roomId);
+        if (debate && debate.state.currentSpeech === speech) {
+          this.endSpeech(roomId);
+        }
+      },
+      // onError
+      (error) => {
+        console.error(`[DebateController] Bot speech error:`, error);
+        this.callbacks?.onBotSpeechError?.(roomId, error);
+      }
+    );
+  }
+
+  /**
+   * Check if a participant is a bot
+   */
+  private isParticipantBot(roomId: string, participantId: string): boolean {
+    const room = roomManager.getRoom(roomId);
+    if (!room) return false;
+
+    const participant = room.participants.get(participantId);
+    return participant?.isBot || false;
   }
 }
 

@@ -310,6 +310,88 @@ class ElevenLabsTTSService {
         }
         return null;
     }
+    /**
+     * Get bot character voice for a given language (Milestone 5)
+     * Each bot character has a preferred voice style
+     */
+    getBotVoice(character, language) {
+        // Bot character voice preferences (using ElevenLabs voice IDs)
+        // These map character personalities to voice types
+        const botVoiceMap = {
+            scholar: {
+                englishVoice: 'TX3LPaxmHKxFdv7VOQHJ', // Liam - authoritative, measured
+                fallbackIndex: 1, // Second voice in list (usually male/authoritative)
+            },
+            passionate: {
+                englishVoice: 'EXAVITQu4vr4xnSDxMaL', // Sarah - expressive
+                fallbackIndex: 0, // First voice in list
+            },
+            aggressive: {
+                englishVoice: 'TX3LPaxmHKxFdv7VOQHJ', // Liam - strong, confident
+                fallbackIndex: 1,
+            },
+            beginner: {
+                englishVoice: 'XB0fDUnXU5powFXDhCwa', // Charlotte - softer, natural
+                fallbackIndex: 0,
+            },
+        };
+        const voices = this.getPresetVoices(language);
+        const botPref = botVoiceMap[character];
+        // For English, use specific voice
+        if (language === 'en') {
+            const specificVoice = voices.find(v => v.voiceId === botPref.englishVoice);
+            if (specificVoice)
+                return specificVoice;
+        }
+        // For other languages, use fallback index or first voice
+        const fallbackVoice = voices[botPref.fallbackIndex] || voices[0];
+        if (fallbackVoice)
+            return fallbackVoice;
+        // Ultimate fallback to any English voice
+        const englishVoices = this.presetVoices.get('en') || [];
+        return englishVoices[0] || {
+            voiceId: 'EXAVITQu4vr4xnSDxMaL',
+            name: 'Sarah',
+            language: 'en',
+        };
+    }
+    /**
+     * Get bot character voice settings (stability/speed adjustments)
+     */
+    getBotVoiceSettings(character) {
+        // Character-specific voice settings aligned with their personalities
+        const characterSettings = {
+            scholar: {
+                stability: 0.70, // Very stable, measured delivery
+                similarity_boost: 0.75,
+                style: 0,
+                speed: 0.95, // Slightly slower, deliberate
+                use_speaker_boost: true,
+            },
+            passionate: {
+                stability: 0.45, // More expressive, emotional range
+                similarity_boost: 0.75,
+                style: 0,
+                speed: 1.05, // Slightly faster, energetic
+                use_speaker_boost: true,
+            },
+            aggressive: {
+                stability: 0.40, // Most expressive, intense
+                similarity_boost: 0.75,
+                style: 0,
+                speed: 1.10, // Faster, urgent delivery
+                use_speaker_boost: true,
+            },
+            beginner: {
+                stability: 0.65, // Somewhat stable, natural
+                similarity_boost: 0.75,
+                style: 0,
+                speed: 0.90, // Slower, easier to follow
+                use_speaker_boost: true,
+            },
+        };
+        return characterSettings[character];
+    }
 }
 // Export singleton instance
 export const elevenLabsTTS = new ElevenLabsTTSService();

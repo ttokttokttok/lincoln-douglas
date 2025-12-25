@@ -2,6 +2,20 @@ export type LanguageCode = 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'ru' | 'zh'
 export type Side = 'AFF' | 'NEG';
 export type RoomStatus = 'waiting' | 'ready' | 'in_progress' | 'completed';
 export type SpeechRole = 'AC' | 'NC' | '1AR' | 'NR' | '2AR';
+export type RoomMode = 'pvp' | 'practice';
+export type BotCharacter = 'scholar' | 'passionate' | 'aggressive' | 'beginner';
+export type BotDifficulty = 'easy' | 'medium' | 'hard';
+export interface BotCharacterInfo {
+    id: BotCharacter;
+    name: string;
+    description: string;
+    difficulty: BotDifficulty;
+    icon: string;
+    voiceSettings: {
+        stability: number;
+        speed: number;
+    };
+}
 export interface Participant {
     id: string;
     displayName: string;
@@ -10,6 +24,8 @@ export interface Participant {
     listeningLanguage: LanguageCode;
     isReady: boolean;
     isConnected: boolean;
+    isBot: boolean;
+    botCharacter?: BotCharacter;
 }
 export interface RoomState {
     id: string;
@@ -21,6 +37,8 @@ export interface RoomState {
     currentSpeaker: string | null;
     currentSpeech: SpeechRole | null;
     createdAt: number;
+    mode: RoomMode;
+    botCharacter?: BotCharacter;
 }
 export interface TimerState {
     speechTimeRemaining: number;
@@ -33,7 +51,7 @@ export interface TimerState {
     isPrepTime: boolean;
     prepSide: Side | null;
 }
-export type WSMessageType = 'room:create' | 'room:join' | 'room:leave' | 'room:state' | 'room:ready' | 'room:start' | 'room:error' | 'participant:update' | 'participant:joined' | 'participant:left' | 'signal:offer' | 'signal:answer' | 'signal:ice' | 'timer:update' | 'timer:start' | 'timer:pause' | 'speech:start' | 'speech:end' | 'prep:start' | 'prep:end' | 'error' | 'audio:start' | 'audio:chunk' | 'audio:stop' | 'stt:interim' | 'stt:final' | 'translation:interim' | 'translation:complete' | 'flow:argument' | 'flow:state' | 'ballot:ready' | 'latency:update' | 'tts:start' | 'tts:audio_chunk' | 'tts:end' | 'tts:error' | 'voice:select' | 'voice:list:request' | 'voice:list' | 'debate:timeout_warning' | 'debate:timeout_end';
+export type WSMessageType = 'room:create' | 'room:join' | 'room:leave' | 'room:state' | 'room:ready' | 'room:start' | 'room:error' | 'participant:update' | 'participant:joined' | 'participant:left' | 'signal:offer' | 'signal:answer' | 'signal:ice' | 'timer:update' | 'timer:start' | 'timer:pause' | 'speech:start' | 'speech:end' | 'prep:start' | 'prep:end' | 'error' | 'audio:start' | 'audio:chunk' | 'audio:stop' | 'stt:interim' | 'stt:final' | 'translation:interim' | 'translation:complete' | 'flow:argument' | 'flow:state' | 'ballot:ready' | 'latency:update' | 'tts:start' | 'tts:audio_chunk' | 'tts:end' | 'tts:error' | 'voice:select' | 'voice:list:request' | 'voice:list' | 'debate:timeout_warning' | 'debate:timeout_end' | 'bot:room:create' | 'bot:speech:generating' | 'bot:speech:ready' | 'bot:speech:skip';
 export interface WSMessage<T = unknown> {
     type: WSMessageType;
     payload: T;
@@ -254,5 +272,23 @@ export interface TimeoutWarningPayload {
 export interface TimeoutEndPayload {
     reason: TimeoutReason;
     message: string;
+}
+export interface BotRoomCreatePayload {
+    resolution: string;
+    displayName: string;
+    botCharacter: BotCharacter;
+    userSide: Side;
+    userLanguage: LanguageCode;
+}
+export interface BotSpeechGeneratingPayload {
+    speechRole: SpeechRole;
+    botCharacter: BotCharacter;
+}
+export interface BotSpeechReadyPayload {
+    speechRole: SpeechRole;
+    speechText: string;
+}
+export interface BotSpeechSkipPayload {
+    speechId: string;
 }
 //# sourceMappingURL=types.d.ts.map

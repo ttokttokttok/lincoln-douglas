@@ -15,6 +15,7 @@ import { LanguageSelector } from '../components/LanguageSelector';
 import { VoiceSelector } from '../components/VoiceSelector';
 import { TTSSettings } from '../components/TTSSettings';
 import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload, type TimeoutWarningPayload, type TimeoutEndPayload, type VoiceConfig } from '@shared/types';
+import { Bot, SkipForward, Loader } from 'lucide-react';
 
 export function Room() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -42,6 +43,11 @@ export function Room() {
   const [availableVoices, setAvailableVoices] = useState<VoiceConfig[]>([]);
   const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
   const [voicesLoading, setVoicesLoading] = useState(false);
+
+  // Bot state (Milestone 5)
+  const [isBotGenerating, setIsBotGenerating] = useState(false);
+  // botSpeechText can be used for transcript display in future
+  const [, setBotSpeechText] = useState<string | null>(null);
 
   // Track if we're the initiator (first to join with stream ready)
   const isInitiatorRef = useRef(false);
@@ -325,6 +331,8 @@ export function Room() {
     // Voice selection (Milestone 3)
     requestVoiceList,
     selectVoice,
+    // Bot actions (Milestone 5)
+    skipBotSpeech,
   } = useWebSocket({
     roomCode: roomId || '',
     displayName,
@@ -340,6 +348,17 @@ export function Room() {
     // Timeout callbacks
     onTimeoutWarning: handleTimeoutWarning,
     onTimeoutEnd: handleTimeoutEnd,
+    // Bot callbacks (Milestone 5)
+    onBotGenerating: (speechRole, _character) => {
+      console.log('[Room] Bot generating speech:', speechRole);
+      setIsBotGenerating(true);
+      setBotSpeechText(null);
+    },
+    onBotSpeechReady: (speechRole, speechText) => {
+      console.log('[Room] Bot speech ready:', speechRole);
+      setIsBotGenerating(false);
+      setBotSpeechText(speechText);
+    },
   });
 
   // Set signal senders ref for usePeer callback
@@ -449,6 +468,17 @@ export function Room() {
 
   // Get opponent data
   const opponent = room?.participants.find(p => p.id !== myParticipantId);
+
+  // Practice mode helpers (Milestone 5)
+  const isOpponentBot = opponent?.isBot === true;
+  const isBotSpeaking = isOpponentBot && room?.currentSpeaker === opponent?.id && room?.status === 'in_progress';
+
+  // Handle skip bot speech
+  const handleSkipBotSpeech = useCallback(() => {
+    if (room?.currentSpeech) {
+      skipBotSpeech(room.currentSpeech);
+    }
+  }, [room?.currentSpeech, skipBotSpeech]);
 
   // Connection status display
   const getStatusDisplay = () => {
@@ -683,38 +713,67 @@ export function Room() {
             )}
           </div>
 
-          {/* Remote Video */}
-          <VideoPanel
-            stream={remoteStream}
-            isLocal={false}
-            label={opponent?.displayName}
-            isConnecting={isPeerConnecting}
-            placeholder={
-              <div className="text-center text-gray-500">
-                {opponent ? (
-                  isPeerConnected ? (
-                    <>
-                      <div className="text-4xl mb-2">📹</div>
-                      <p className="text-sm">Waiting for video...</p>
-                    </>
-                  ) : (
-                    <>
-                      <div className="animate-pulse text-4xl mb-2">🔗</div>
-                      <p className="text-sm">Connecting to {opponent.displayName}...</p>
-                    </>
-                  )
-                ) : (
-                  <>
-                    <div className="text-4xl mb-2">👤</div>
-                    <p className="text-sm">Waiting for opponent...</p>
-                    <p className="text-xs mt-2 text-gray-600">
-                      Share code: <span className="font-mono text-white">{roomId}</span>
-                    </p>
-                  </>
+          {/* Remote Video / Bot Panel */}
+          {isOpponentBot ? (
+            // Bot opponent panel (Milestone 5)
+            <div className="relative bg-gray-900 rounded-lg aspect-video flex items-center justify-center">
+              <div className="text-center">
+                <div className="p-4 bg-purple-500/20 rounded-full inline-block mb-3">
+                  <Bot className="w-12 h-12 text-purple-400" />
+                </div>
+                <p className="text-white font-semibold">{opponent?.displayName}</p>
+                <p className="text-sm text-gray-400">AI Opponent</p>
+                {isBotGenerating && (
+                  <div className="mt-3 flex items-center justify-center gap-2 text-purple-400">
+                    <Loader className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Thinking...</span>
+                  </div>
+                )}
+                {isBotSpeaking && !isBotGenerating && (
+                  <button
+                    onClick={handleSkipBotSpeech}
+                    className="mt-3 flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg mx-auto transition-colors"
+                  >
+                    <SkipForward className="w-4 h-4" />
+                    <span className="text-sm">Skip Speech</span>
+                  </button>
                 )}
               </div>
-            }
-          />
+            </div>
+          ) : (
+            // Human opponent video panel
+            <VideoPanel
+              stream={remoteStream}
+              isLocal={false}
+              label={opponent?.displayName}
+              isConnecting={isPeerConnecting}
+              placeholder={
+                <div className="text-center text-gray-500">
+                  {opponent ? (
+                    isPeerConnected ? (
+                      <>
+                        <div className="text-4xl mb-2">📹</div>
+                        <p className="text-sm">Waiting for video...</p>
+                      </>
+                    ) : (
+                      <>
+                        <div className="animate-pulse text-4xl mb-2">🔗</div>
+                        <p className="text-sm">Connecting to {opponent.displayName}...</p>
+                      </>
+                    )
+                  ) : (
+                    <>
+                      <div className="text-4xl mb-2">👤</div>
+                      <p className="text-sm">Waiting for opponent...</p>
+                      <p className="text-xs mt-2 text-gray-600">
+                        Share code: <span className="font-mono text-white">{roomId}</span>
+                      </p>
+                    </>
+                  )}
+                </div>
+              }
+            />
+          )}
         </div>
 
         {/* Participants Setup - Hide during debate */}

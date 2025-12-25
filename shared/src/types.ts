@@ -22,6 +22,32 @@ export type RoomStatus = 'waiting' | 'ready' | 'in_progress' | 'completed';
 // Speech roles in LD format
 export type SpeechRole = 'AC' | 'NC' | '1AR' | 'NR' | '2AR';
 
+// ==========================================
+// Milestone 5: Bot Practice Mode Types
+// ==========================================
+
+// Room mode (PvP vs Practice with AI)
+export type RoomMode = 'pvp' | 'practice';
+
+// Bot character archetypes
+export type BotCharacter = 'scholar' | 'passionate' | 'aggressive' | 'beginner';
+
+// Bot difficulty levels
+export type BotDifficulty = 'easy' | 'medium' | 'hard';
+
+// Bot character metadata
+export interface BotCharacterInfo {
+  id: BotCharacter;
+  name: string;
+  description: string;
+  difficulty: BotDifficulty;
+  icon: string;
+  voiceSettings: {
+    stability: number;
+    speed: number;
+  };
+}
+
 // Participant in a room
 export interface Participant {
   id: string;
@@ -31,6 +57,9 @@ export interface Participant {
   listeningLanguage: LanguageCode;
   isReady: boolean;
   isConnected: boolean;
+  // Milestone 5: Bot fields
+  isBot: boolean;
+  botCharacter?: BotCharacter;
 }
 
 // Room state (serializable version for transport)
@@ -44,6 +73,9 @@ export interface RoomState {
   currentSpeaker: string | null;
   currentSpeech: SpeechRole | null;
   createdAt: number;
+  // Milestone 5: Bot practice mode fields
+  mode: RoomMode;
+  botCharacter?: BotCharacter;
 }
 
 // Timer state
@@ -109,7 +141,12 @@ export type WSMessageType =
   | 'voice:list'          // Server -> Client: Available voices
   // Timeout management (Milestone 3)
   | 'debate:timeout_warning'  // Server -> Client: Warning before auto-end
-  | 'debate:timeout_end';     // Server -> Client: Debate ended due to timeout
+  | 'debate:timeout_end'      // Server -> Client: Debate ended due to timeout
+  // Bot practice mode (Milestone 5)
+  | 'bot:room:create'         // Client -> Server: Create practice room with bot
+  | 'bot:speech:generating'   // Server -> Client: Bot is generating speech
+  | 'bot:speech:ready'        // Server -> Client: Bot speech ready to play
+  | 'bot:speech:skip';        // Client -> Server: Skip current bot speech
 
 // Base WebSocket message
 export interface WSMessage<T = unknown> {
@@ -538,4 +575,34 @@ export interface TimeoutWarningPayload {
 export interface TimeoutEndPayload {
   reason: TimeoutReason;
   message: string;
+}
+
+// ==========================================
+// Milestone 5: Bot Practice Mode Payloads
+// ==========================================
+
+// Bot room creation payload
+export interface BotRoomCreatePayload {
+  resolution: string;
+  displayName: string;
+  botCharacter: BotCharacter;
+  userSide: Side;
+  userLanguage: LanguageCode;
+}
+
+// Bot speech generating payload
+export interface BotSpeechGeneratingPayload {
+  speechRole: SpeechRole;
+  botCharacter: BotCharacter;
+}
+
+// Bot speech ready payload
+export interface BotSpeechReadyPayload {
+  speechRole: SpeechRole;
+  speechText: string;
+}
+
+// Bot speech skip payload (empty, just triggers skip)
+export interface BotSpeechSkipPayload {
+  speechId: string;
 }

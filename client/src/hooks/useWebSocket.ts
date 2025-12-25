@@ -22,6 +22,9 @@ import type {
   TimeoutWarningPayload,
   TimeoutEndPayload,
   EmotionMarkers,
+  BotCharacter,
+  BotSpeechGeneratingPayload,
+  BotSpeechReadyPayload,
 } from '@shared/types';
 
 const WS_URL = 'ws://localhost:3001/ws';
@@ -100,6 +103,9 @@ interface UseWebSocketOptions {
   // Timeout callbacks (Milestone 3)
   onTimeoutWarning?: (payload: TimeoutWarningPayload) => void;
   onTimeoutEnd?: (payload: TimeoutEndPayload) => void;
+  // Bot callbacks (Milestone 5)
+  onBotGenerating?: (speechRole: SpeechRole, character: BotCharacter) => void;
+  onBotSpeechReady?: (speechRole: SpeechRole, speechText: string) => void;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
@@ -107,6 +113,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     roomCode, displayName, onConnect, onDisconnect, onSignal, onTranscript, onTranslation, onBallot,
     onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList,
     onTimeoutWarning, onTimeoutEnd,
+    onBotGenerating, onBotSpeechReady,
   } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
@@ -296,13 +303,28 @@ export function useWebSocket(options: UseWebSocketOptions) {
           break;
         }
 
+        // Bot messages (Milestone 5)
+        case 'bot:speech:generating': {
+          const payload = message.payload as BotSpeechGeneratingPayload;
+          console.log('[WS] Bot generating speech:', payload.speechRole);
+          onBotGenerating?.(payload.speechRole, payload.botCharacter);
+          break;
+        }
+
+        case 'bot:speech:ready': {
+          const payload = message.payload as BotSpeechReadyPayload;
+          console.log('[WS] Bot speech ready:', payload.speechRole, '(' + payload.speechText.length + ' chars)');
+          onBotSpeechReady?.(payload.speechRole, payload.speechText);
+          break;
+        }
+
         default:
           console.log('[WS] Unhandled message type:', message.type);
       }
     } catch (error) {
       console.error('[WS] Failed to parse message:', error);
     }
-  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList, onTimeoutWarning, onTimeoutEnd]);
+  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList, onTimeoutWarning, onTimeoutEnd, onBotGenerating, onBotSpeechReady]);
 
   // Send a message
   const send = useCallback((type: WSMessageType, payload: unknown) => {
@@ -494,6 +516,28 @@ export function useWebSocket(options: UseWebSocketOptions) {
     console.log('[WS] Selected voice:', speakingVoiceId);
   }, [send]);
 
+  // Bot actions (Milestone 5)
+  const createBotRoom = useCallback((
+    resolution: string,
+    botCharacter: BotCharacter,
+    userSide: Side,
+    userLanguage: LanguageCode
+  ) => {
+    send('bot:room:create', {
+      resolution,
+      displayName,
+      botCharacter,
+      userSide,
+      userLanguage,
+    });
+    console.log('[WS] Creating bot room with', botCharacter);
+  }, [send, displayName]);
+
+  const skipBotSpeech = useCallback((speechId: string) => {
+    send('bot:speech:skip', { speechId });
+    console.log('[WS] Skipping bot speech');
+  }, [send]);
+
   return {
     send,
     connect,
@@ -518,5 +562,8 @@ export function useWebSocket(options: UseWebSocketOptions) {
     // Voice selection (Milestone 3)
     requestVoiceList,
     selectVoice,
+    // Bot actions (Milestone 5)
+    createBotRoom,
+    skipBotSpeech,
   };
 }

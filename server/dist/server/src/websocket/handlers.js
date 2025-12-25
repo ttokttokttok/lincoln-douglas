@@ -1,4 +1,5 @@
 import { SPEECH_ORDER, SPEECH_SIDES } from '@shared/types';
+import { createBotParticipantState, registerBot, getBotState, } from '../bot/botParticipant.js';
 import { roomManager } from '../rooms/manager.js';
 import { debateManager } from '../timer/debateController.js';
 import { audioSessionManager } from '../audio/sessionManager.js';
@@ -337,6 +338,13 @@ export function handleMessage(client, message, server) {
             break;
         case 'voice:select':
             handleVoiceSelect(client, message.payload, server);
+            break;
+        // Bot practice mode handlers (Milestone 5)
+        case 'bot:room:create':
+            handleBotRoomCreate(client, message.payload, server);
+            break;
+        case 'bot:speech:skip':
+            handleBotSpeechSkip(client, message.payload, server);
             break;
         default:
             console.warn(`Unknown message type: ${message.type}`);
@@ -812,5 +820,90 @@ function handleVoiceSelect(client, payload, server) {
     });
     const voice = elevenLabsTTS.getVoiceById(speakingVoiceId);
     console.log(`[Voice] ${client.id} selected voice: ${voice?.name || speakingVoiceId}`);
+}
+// ==========================================
+// Bot Practice Mode Handlers (Milestone 5)
+// ==========================================
+/**
+ * Create a bot practice room
+ */
+function handleBotRoomCreate(client, payload, server) {
+    const { resolution, displayName, botCharacter, userSide, userLanguage } = payload;
+    // Validate required fields
+    if (!resolution || !displayName || !botCharacter || !userSide || !userLanguage) {
+        server.sendError(client.id, 'Missing required fields for bot room creation');
+        return;
+    }
+    // Validate bot character
+    const validCharacters = ['scholar', 'passionate', 'aggressive', 'beginner'];
+    if (!validCharacters.includes(botCharacter)) {
+        server.sendError(client.id, 'Invalid bot character');
+        return;
+    }
+    // Validate side
+    if (userSide !== 'AFF' && userSide !== 'NEG') {
+        server.sendError(client.id, 'Invalid side selection');
+        return;
+    }
+    // Create the bot room
+    const room = roomManager.createBotRoom(client.id, displayName, resolution, botCharacter, userSide, userLanguage);
+    // Register bot participant state
+    const botId = roomManager.getBotParticipantId(room.id);
+    if (botId) {
+        const botSide = userSide === 'AFF' ? 'NEG' : 'AFF';
+        const botState = createBotParticipantState(room.id, botId, botCharacter, botSide, userLanguage);
+        registerBot(botState);
+    }
+    // Associate client with room
+    server.setClientRoom(client.id, room.id);
+    // Send room state to creator
+    server.send(client.id, {
+        type: 'room:state',
+        payload: {
+            room: roomManager.serializeRoom(room),
+            yourParticipantId: client.id,
+        },
+    });
+    console.log(`[Bot] Practice room created: ${room.code} with ${botCharacter} bot`);
+}
+/**
+ * Skip the current bot speech
+ */
+function handleBotSpeechSkip(client, payload, server) {
+    if (!client.roomId) {
+        server.sendError(client.id, 'Not in a room');
+        return;
+    }
+    const room = roomManager.getRoom(client.roomId);
+    if (!room || room.mode !== 'practice') {
+        server.sendError(client.id, 'Not in a practice room');
+        return;
+    }
+    const botState = getBotState(client.roomId);
+    if (!botState) {
+        server.sendError(client.id, 'No bot in this room');
+        return;
+    }
+    // Check if bot is currently speaking
+    const botId = roomManager.getBotParticipantId(client.roomId);
+    if (room.currentSpeaker !== botId) {
+        server.sendError(client.id, 'Bot is not currently speaking');
+        return;
+    }
+    // Clear TTS queue for the bot
+    if (botId) {
+        ttsSessionManager.clearQueue(botId);
+        console.log(`[Bot] Speech skipped by user in room ${client.roomId}`);
+    }
+    // End the bot's current speech early
+    debateManager.endSpeech(client.roomId);
+    // Notify the client
+    server.send(client.id, {
+        type: 'speech:end',
+        payload: {
+            speech: room.currentSpeech,
+            skipped: true,
+        },
+    });
 }
 //# sourceMappingURL=handlers.js.map

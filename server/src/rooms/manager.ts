@@ -5,7 +5,10 @@ import type {
   RoomStatus,
   Side,
   LanguageCode,
+  RoomMode,
+  BotCharacter,
 } from '@shared/types';
+import { BOT_DISPLAY_NAMES } from '@shared/types';
 
 // Internal room representation (uses Map for participants)
 interface Room {
@@ -18,6 +21,9 @@ interface Room {
   currentSpeaker: string | null;
   currentSpeech: string | null;
   createdAt: number;
+  // Milestone 5: Bot practice mode
+  mode: RoomMode;
+  botCharacter?: BotCharacter;
 }
 
 class RoomManager {
@@ -48,6 +54,7 @@ class RoomManager {
       listeningLanguage: 'en',
       isReady: false,
       isConnected: true,
+      isBot: false,
     };
 
     const room: Room = {
@@ -60,6 +67,7 @@ class RoomManager {
       currentSpeaker: null,
       currentSpeech: null,
       createdAt: Date.now(),
+      mode: 'pvp',
     };
 
     this.rooms.set(id, room);
@@ -84,6 +92,7 @@ class RoomManager {
       currentSpeaker: null,
       currentSpeech: null,
       createdAt: Date.now(),
+      mode: 'pvp',
     };
 
     this.rooms.set(id, room);
@@ -91,6 +100,82 @@ class RoomManager {
 
     console.log(`Empty room created: ${code} (${id})`);
     return room;
+  }
+
+  // Create a bot practice room (Milestone 5)
+  createBotRoom(
+    userId: string,
+    userName: string,
+    resolution: string,
+    botCharacter: BotCharacter,
+    userSide: Side,
+    userLanguage: LanguageCode
+  ): Room {
+    const id = uuid();
+    const code = this.generateCode();
+    const botId = `bot-${uuid()}`;
+    const botSide: Side = userSide === 'AFF' ? 'NEG' : 'AFF';
+
+    // Create user participant
+    const user: Participant = {
+      id: userId,
+      displayName: userName,
+      side: userSide,
+      speakingLanguage: userLanguage,
+      listeningLanguage: userLanguage,
+      isReady: true,
+      isConnected: true,
+      isBot: false,
+    };
+
+    // Create bot participant
+    const bot: Participant = {
+      id: botId,
+      displayName: BOT_DISPLAY_NAMES[botCharacter],
+      side: botSide,
+      speakingLanguage: userLanguage, // Bot speaks user's language
+      listeningLanguage: userLanguage,
+      isReady: true,
+      isConnected: true,
+      isBot: true,
+      botCharacter,
+    };
+
+    const room: Room = {
+      id,
+      code,
+      resolution,
+      status: 'ready', // Bot rooms start ready immediately
+      hostId: userId,
+      participants: new Map([
+        [userId, user],
+        [botId, bot],
+      ]),
+      currentSpeaker: null,
+      currentSpeech: null,
+      createdAt: Date.now(),
+      mode: 'practice',
+      botCharacter,
+    };
+
+    this.rooms.set(id, room);
+    this.codeToRoomId.set(code, id);
+
+    console.log(`Bot room created: ${code} (${id}) with ${BOT_DISPLAY_NAMES[botCharacter]}`);
+    return room;
+  }
+
+  // Get bot participant ID from a room
+  getBotParticipantId(roomId: string): string | null {
+    const room = this.rooms.get(roomId);
+    if (!room || room.mode !== 'practice') return null;
+
+    for (const [id, participant] of room.participants) {
+      if (participant.isBot) {
+        return id;
+      }
+    }
+    return null;
   }
 
   getRoom(roomId: string): Room | undefined {
@@ -129,6 +214,7 @@ class RoomManager {
       listeningLanguage: 'en',
       isReady: false,
       isConnected: true,
+      isBot: false,
     };
 
     room.participants.set(participantId, participant);
@@ -249,6 +335,8 @@ class RoomManager {
       currentSpeaker: room.currentSpeaker,
       currentSpeech: room.currentSpeech as RoomState['currentSpeech'],
       createdAt: room.createdAt,
+      mode: room.mode,
+      botCharacter: room.botCharacter,
     };
   }
 
