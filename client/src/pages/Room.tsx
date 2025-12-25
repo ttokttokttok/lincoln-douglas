@@ -12,7 +12,7 @@ import { Timer } from '../components/Timer';
 import { TranscriptPanel } from '../components/TranscriptPanel';
 import { BallotDisplay } from '../components/BallotDisplay';
 import { LanguageSelector } from '../components/LanguageSelector';
-import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload } from '@shared/types';
+import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload, type TimeoutWarningPayload, type TimeoutEndPayload } from '@shared/types';
 
 export function Room() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -28,6 +28,9 @@ export function Room() {
 
   // Ballot state (shown at end of debate)
   const [ballotData, setBallotData] = useState<BallotReadyPayload | null>(null);
+
+  // Timeout warning state
+  const [timeoutWarning, setTimeoutWarning] = useState<TimeoutWarningPayload | null>(null);
 
   // TTS state (Milestone 3)
   const [ttsEnabled, _setTtsEnabled] = useState(true);
@@ -170,6 +173,20 @@ export function Room() {
     setBallotData(payload);
   }, []);
 
+  // Handle timeout warning
+  const handleTimeoutWarning = useCallback((payload: TimeoutWarningPayload) => {
+    setTimeoutWarning(payload);
+    // Auto-dismiss after 30 seconds
+    setTimeout(() => setTimeoutWarning(null), 30000);
+  }, []);
+
+  // Handle timeout end
+  const handleTimeoutEnd = useCallback((payload: TimeoutEndPayload) => {
+    // Show alert and clear warning
+    setTimeoutWarning(null);
+    alert(payload.message);
+  }, []);
+
   // Mute/unmute remote audio when TTS is playing
   const muteRemoteAudio = useCallback((mute: boolean) => {
     if (remoteStream) {
@@ -277,6 +294,9 @@ export function Room() {
     onTTSStart: handleTTSStart,
     onTTSChunk: handleTTSChunk,
     onTTSEnd: handleTTSEnd,
+    // Timeout callbacks
+    onTimeoutWarning: handleTimeoutWarning,
+    onTimeoutEnd: handleTimeoutEnd,
   });
 
   // Set signal senders ref for usePeer callback
@@ -447,6 +467,27 @@ export function Room() {
           flowState={ballotData.flowState}
           onClose={() => setBallotData(null)}
         />
+      )}
+
+      {/* Timeout Warning Banner */}
+      {timeoutWarning && (
+        <div className="fixed top-0 left-0 right-0 z-50 bg-yellow-600 text-white px-4 py-3 flex items-center justify-between shadow-lg">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">⚠️</span>
+            <div>
+              <p className="font-semibold">
+                {timeoutWarning.reason === 'inactivity' ? 'Inactivity Warning' : 'Time Limit Warning'}
+              </p>
+              <p className="text-sm opacity-90">{timeoutWarning.message}</p>
+            </div>
+          </div>
+          <button
+            onClick={() => setTimeoutWarning(null)}
+            className="px-3 py-1 bg-yellow-700 hover:bg-yellow-800 rounded text-sm"
+          >
+            Dismiss
+          </button>
+        </div>
       )}
 
       <div className="min-h-screen p-4">

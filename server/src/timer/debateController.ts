@@ -1,7 +1,12 @@
-import type { SpeechRole, Side, TimerState } from '@shared/types';
+import type { SpeechRole, Side, TimerState, TimeoutReason } from '@shared/types';
 import { SPEECH_SIDES, SPEECH_ORDER } from '@shared/types';
 import { TimerController } from './controller.js';
 import { roomManager } from '../rooms/manager.js';
+
+// Timeout configuration
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000;  // 10 minutes
+const MAX_DURATION_MS = 90 * 60 * 1000;         // 90 minutes
+const WARNING_BEFORE_TIMEOUT_MS = 2 * 60 * 1000; // 2 minute warning
 
 export interface DebateState {
   roomId: string;
@@ -9,6 +14,9 @@ export interface DebateState {
   currentSpeaker: string | null;  // participant ID
   currentSpeech: SpeechRole | null;
   timer: TimerState;
+  // Timeout tracking
+  lastActivityTime: number;
+  debateStartTime: number;
 }
 
 interface DebateCallbacks {
@@ -17,14 +25,139 @@ interface DebateCallbacks {
   onSpeechEnd: (roomId: string, speech: SpeechRole, nextSpeech: SpeechRole | null) => void;
   onDebateStart: (roomId: string) => void;
   onDebateEnd: (roomId: string) => void;
+  // Timeout callbacks
+  onTimeoutWarning?: (roomId: string, reason: TimeoutReason, secondsRemaining: number) => void;
+  onTimeoutEnd?: (roomId: string, reason: TimeoutReason) => void;
+}
+
+interface TimeoutTimers {
+  inactivityTimer: NodeJS.Timeout | null;
+  inactivityWarningTimer: NodeJS.Timeout | null;
+  maxDurationTimer: NodeJS.Timeout | null;
+  maxDurationWarningTimer: NodeJS.Timeout | null;
 }
 
 class DebateManager {
-  private debates: Map<string, { timer: TimerController; state: DebateState }> = new Map();
+  private debates: Map<string, { timer: TimerController; state: DebateState; timeouts: TimeoutTimers }> = new Map();
   private callbacks: DebateCallbacks | null = null;
 
   setCallbacks(callbacks: DebateCallbacks): void {
     this.callbacks = callbacks;
+  }
+
+  /**
+   * Record activity for a room (resets inactivity timer)
+   * Call this when audio chunks are received, speech starts, etc.
+   */
+  recordActivity(roomId: string): void {
+    const debate = this.debates.get(roomId);
+    if (!debate || !debate.state.isActive) return;
+
+    debate.state.lastActivityTime = Date.now();
+    this.resetInactivityTimer(roomId);
+  }
+
+  /**
+   * Start timeout timers for a debate
+   */
+  private startTimeoutTimers(roomId: string): void {
+    const debate = this.debates.get(roomId);
+    if (!debate) return;
+
+    const now = Date.now();
+    debate.state.debateStartTime = now;
+    debate.state.lastActivityTime = now;
+
+    // Clear any existing timers
+    this.clearTimeoutTimers(roomId);
+
+    // Start max duration timer (90 minutes)
+    debate.timeouts.maxDurationWarningTimer = setTimeout(() => {
+      console.log(`[Timeout] Max duration warning for room ${roomId}`);
+      this.callbacks?.onTimeoutWarning?.(roomId, 'max_duration', WARNING_BEFORE_TIMEOUT_MS / 1000);
+    }, MAX_DURATION_MS - WARNING_BEFORE_TIMEOUT_MS);
+
+    debate.timeouts.maxDurationTimer = setTimeout(() => {
+      console.log(`[Timeout] Max duration reached for room ${roomId}`);
+      this.handleTimeout(roomId, 'max_duration');
+    }, MAX_DURATION_MS);
+
+    // Start inactivity timer (10 minutes)
+    this.resetInactivityTimer(roomId);
+
+    console.log(`[Timeout] Started timeout timers for room ${roomId}`);
+    console.log(`[Timeout] Max duration: ${MAX_DURATION_MS / 60000} min, Inactivity: ${INACTIVITY_TIMEOUT_MS / 60000} min`);
+  }
+
+  /**
+   * Reset the inactivity timer (called when activity is recorded)
+   */
+  private resetInactivityTimer(roomId: string): void {
+    const debate = this.debates.get(roomId);
+    if (!debate || !debate.state.isActive) return;
+
+    // Clear existing inactivity timers
+    if (debate.timeouts.inactivityWarningTimer) {
+      clearTimeout(debate.timeouts.inactivityWarningTimer);
+      debate.timeouts.inactivityWarningTimer = null;
+    }
+    if (debate.timeouts.inactivityTimer) {
+      clearTimeout(debate.timeouts.inactivityTimer);
+      debate.timeouts.inactivityTimer = null;
+    }
+
+    // Set new inactivity warning timer
+    debate.timeouts.inactivityWarningTimer = setTimeout(() => {
+      console.log(`[Timeout] Inactivity warning for room ${roomId}`);
+      this.callbacks?.onTimeoutWarning?.(roomId, 'inactivity', WARNING_BEFORE_TIMEOUT_MS / 1000);
+    }, INACTIVITY_TIMEOUT_MS - WARNING_BEFORE_TIMEOUT_MS);
+
+    // Set new inactivity timer
+    debate.timeouts.inactivityTimer = setTimeout(() => {
+      console.log(`[Timeout] Inactivity timeout for room ${roomId}`);
+      this.handleTimeout(roomId, 'inactivity');
+    }, INACTIVITY_TIMEOUT_MS);
+  }
+
+  /**
+   * Handle timeout - end the debate
+   */
+  private handleTimeout(roomId: string, reason: TimeoutReason): void {
+    const debate = this.debates.get(roomId);
+    if (!debate || !debate.state.isActive) return;
+
+    console.log(`[Timeout] Ending debate in room ${roomId} due to ${reason}`);
+
+    // Notify about timeout end
+    this.callbacks?.onTimeoutEnd?.(roomId, reason);
+
+    // End the debate
+    this.endDebate(roomId);
+  }
+
+  /**
+   * Clear all timeout timers for a room
+   */
+  private clearTimeoutTimers(roomId: string): void {
+    const debate = this.debates.get(roomId);
+    if (!debate) return;
+
+    if (debate.timeouts.inactivityTimer) {
+      clearTimeout(debate.timeouts.inactivityTimer);
+      debate.timeouts.inactivityTimer = null;
+    }
+    if (debate.timeouts.inactivityWarningTimer) {
+      clearTimeout(debate.timeouts.inactivityWarningTimer);
+      debate.timeouts.inactivityWarningTimer = null;
+    }
+    if (debate.timeouts.maxDurationTimer) {
+      clearTimeout(debate.timeouts.maxDurationTimer);
+      debate.timeouts.maxDurationTimer = null;
+    }
+    if (debate.timeouts.maxDurationWarningTimer) {
+      clearTimeout(debate.timeouts.maxDurationWarningTimer);
+      debate.timeouts.maxDurationWarningTimer = null;
+    }
   }
 
   // Start a debate for a room
@@ -48,6 +181,7 @@ class DebateManager {
     }
 
     // Create debate state
+    const now = Date.now();
     const debateState: DebateState = {
       roomId,
       isActive: true,
@@ -61,6 +195,16 @@ class DebateManager {
         isPrepTime: false,
         prepSide: null,
       },
+      lastActivityTime: now,
+      debateStartTime: now,
+    };
+
+    // Initialize timeout timers
+    const timeoutTimers: TimeoutTimers = {
+      inactivityTimer: null,
+      inactivityWarningTimer: null,
+      maxDurationTimer: null,
+      maxDurationWarningTimer: null,
     };
 
     // Create timer controller
@@ -80,13 +224,16 @@ class DebateManager {
       },
     });
 
-    this.debates.set(roomId, { timer: timerController, state: debateState });
+    this.debates.set(roomId, { timer: timerController, state: debateState, timeouts: timeoutTimers });
 
     // Update room status
     roomManager.setRoomStatus(roomId, 'in_progress');
 
     // Notify debate started
     this.callbacks?.onDebateStart(roomId);
+
+    // Start timeout timers
+    this.startTimeoutTimers(roomId);
 
     // Start the first speech (AC)
     timerController.startDebate();
@@ -104,6 +251,9 @@ class DebateManager {
   endDebate(roomId: string): void {
     const debate = this.debates.get(roomId);
     if (!debate) return;
+
+    // Clear timeout timers
+    this.clearTimeoutTimers(roomId);
 
     debate.timer.destroy();
     debate.state.isActive = false;

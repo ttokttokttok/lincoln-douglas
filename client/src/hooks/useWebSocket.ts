@@ -19,6 +19,8 @@ import type {
   TTSErrorPayload,
   VoiceListPayload,
   VoiceConfig,
+  TimeoutWarningPayload,
+  TimeoutEndPayload,
 } from '@shared/types';
 
 const WS_URL = 'ws://localhost:3001/ws';
@@ -93,12 +95,16 @@ interface UseWebSocketOptions {
   onTTSEnd?: (message: TTSEndMessage) => void;
   onTTSError?: (message: TTSErrorMessage) => void;
   onVoiceList?: (voices: VoiceConfig[], language: LanguageCode) => void;
+  // Timeout callbacks (Milestone 3)
+  onTimeoutWarning?: (payload: TimeoutWarningPayload) => void;
+  onTimeoutEnd?: (payload: TimeoutEndPayload) => void;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
   const {
     roomCode, displayName, onConnect, onDisconnect, onSignal, onTranscript, onTranslation, onBallot,
     onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList,
+    onTimeoutWarning, onTimeoutEnd,
   } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
@@ -271,13 +277,28 @@ export function useWebSocket(options: UseWebSocketOptions) {
           break;
         }
 
+        // Timeout messages (Milestone 3)
+        case 'debate:timeout_warning': {
+          const payload = message.payload as TimeoutWarningPayload;
+          console.warn('[WS] Timeout warning:', payload.reason, '-', payload.message);
+          onTimeoutWarning?.(payload);
+          break;
+        }
+
+        case 'debate:timeout_end': {
+          const payload = message.payload as TimeoutEndPayload;
+          console.warn('[WS] Timeout end:', payload.reason, '-', payload.message);
+          onTimeoutEnd?.(payload);
+          break;
+        }
+
         default:
           console.log('[WS] Unhandled message type:', message.type);
       }
     } catch (error) {
       console.error('[WS] Failed to parse message:', error);
     }
-  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList]);
+  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList, onTimeoutWarning, onTimeoutEnd]);
 
   // Send a message
   const send = useCallback((type: WSMessageType, payload: unknown) => {

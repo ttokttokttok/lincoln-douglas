@@ -33,7 +33,7 @@ export interface TimerState {
     isPrepTime: boolean;
     prepSide: Side | null;
 }
-export type WSMessageType = 'room:create' | 'room:join' | 'room:leave' | 'room:state' | 'room:ready' | 'room:start' | 'room:error' | 'participant:update' | 'participant:joined' | 'participant:left' | 'signal:offer' | 'signal:answer' | 'signal:ice' | 'timer:update' | 'timer:start' | 'timer:pause' | 'speech:start' | 'speech:end' | 'prep:start' | 'prep:end' | 'error' | 'audio:start' | 'audio:chunk' | 'audio:stop' | 'stt:interim' | 'stt:final' | 'translation:interim' | 'translation:complete' | 'flow:argument' | 'flow:state' | 'ballot:ready' | 'latency:update' | 'tts:start' | 'tts:audio_chunk' | 'tts:end' | 'tts:error' | 'voice:select' | 'voice:list:request' | 'voice:list';
+export type WSMessageType = 'room:create' | 'room:join' | 'room:leave' | 'room:state' | 'room:ready' | 'room:start' | 'room:error' | 'participant:update' | 'participant:joined' | 'participant:left' | 'signal:offer' | 'signal:answer' | 'signal:ice' | 'timer:update' | 'timer:start' | 'timer:pause' | 'speech:start' | 'speech:end' | 'prep:start' | 'prep:end' | 'error' | 'audio:start' | 'audio:chunk' | 'audio:stop' | 'stt:interim' | 'stt:final' | 'translation:interim' | 'translation:complete' | 'flow:argument' | 'flow:state' | 'ballot:ready' | 'latency:update' | 'tts:start' | 'tts:audio_chunk' | 'tts:end' | 'tts:error' | 'voice:select' | 'voice:list:request' | 'voice:list' | 'debate:timeout_warning' | 'debate:timeout_end';
 export interface WSMessage<T = unknown> {
     type: WSMessageType;
     payload: T;
@@ -243,5 +243,15 @@ export interface VoiceListRequestPayload {
 export interface VoiceListPayload {
     voices: VoiceConfig[];
     language: LanguageCode;
+}
+export type TimeoutReason = 'inactivity' | 'max_duration';
+export interface TimeoutWarningPayload {
+    reason: TimeoutReason;
+    secondsRemaining: number;
+    message: string;
+}
+export interface TimeoutEndPayload {
+    reason: TimeoutReason;
+    message: string;
 }
 //# sourceMappingURL=types.d.ts.map

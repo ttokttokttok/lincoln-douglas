@@ -223,6 +223,34 @@ export function initializeDebateCallbacks(server) {
                 }
             }
         },
+        // Timeout callbacks
+        onTimeoutWarning: (roomId, reason, secondsRemaining) => {
+            const message = reason === 'inactivity'
+                ? `No activity detected. Debate will end in ${Math.floor(secondsRemaining / 60)} minutes to save resources.`
+                : `Maximum debate duration approaching. Debate will end in ${Math.floor(secondsRemaining / 60)} minutes.`;
+            server.broadcastToRoomAll(roomId, {
+                type: 'debate:timeout_warning',
+                payload: {
+                    reason,
+                    secondsRemaining,
+                    message,
+                },
+            });
+            console.log(`[Timeout] Warning sent to room ${roomId}: ${reason}`);
+        },
+        onTimeoutEnd: (roomId, reason) => {
+            const message = reason === 'inactivity'
+                ? 'Debate ended due to inactivity (10 minutes with no audio).'
+                : 'Debate ended - maximum duration (90 minutes) reached.';
+            server.broadcastToRoomAll(roomId, {
+                type: 'debate:timeout_end',
+                payload: {
+                    reason,
+                    message,
+                },
+            });
+            console.log(`[Timeout] Debate ended in room ${roomId}: ${reason}`);
+        },
     });
 }
 export function handleMessage(client, message, server) {
@@ -599,6 +627,8 @@ function handleAudioChunk(client, payload, server) {
     if (!room || room.status !== 'in_progress') {
         return; // Debate is over, ignore audio chunks
     }
+    // Record activity to reset inactivity timer
+    debateManager.recordActivity(client.roomId);
     // Decode base64 audio data
     const audioBuffer = Buffer.from(payload.audioData, 'base64');
     // Process the chunk through session manager

@@ -452,16 +452,19 @@ GET    /api/rooms/:roomId/recording  Get recording with all audio tracks
 - [x] Searchable language selector (85 languages)
 - [ ] Latency measurement and display (optional polish)
 
-### Milestone 3 — ElevenLabs Voice Synthesis ⬜ NOT STARTED
+### Milestone 3 — ElevenLabs Voice Synthesis ✅ COMPLETE
 > **See [MILESTONE_3.md](./MILESTONE_3.md) for detailed implementation plan**
 
-- [ ] ElevenLabs TTS service integration (eleven_turbo_v2_5 model)
-- [ ] Preset voice selection per language (curated voices)
-- [ ] Streaming TTS audio generation and WebSocket broadcast
-- [ ] Browser audio playback with Web Audio API
-- [ ] Audio playback synchronization and buffering
-- [ ] Voice selection UI in pre-debate setup
-- [ ] TTS volume control and enable/disable toggle
+- [x] ElevenLabs TTS service integration (eleven_flash_v2_5 model for ~75ms latency)
+- [x] Preset voice selection per language (curated voices)
+- [x] Streaming TTS audio generation and WebSocket broadcast
+- [x] Browser audio playback with Web Audio API
+- [x] Audio playback synchronization and buffering (chunk accumulation for seamless MP3 decoding)
+- [x] TTS volume control and enable/disable toggle
+- [x] Turn-based TTS control (only listener hears TTS, not current speaker)
+- [x] TTS queue clearing on speech transitions
+- [x] Debate timeout system (10 min inactivity, 90 min max duration, 2 min warnings)
+- [ ] Voice selection UI in pre-debate setup (Phase 4 - optional polish)
 - [ ] (Stretch) Voice cloning from 30-second sample
 
 ### Milestone 4 — Emotion Preservation + Polish

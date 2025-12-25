@@ -106,7 +106,10 @@ export type WSMessageType =
   | 'tts:error'           // Server -> Client: TTS error occurred
   | 'voice:select'        // Client -> Server: User selected a voice
   | 'voice:list:request'  // Client -> Server: Request available voices
-  | 'voice:list';         // Server -> Client: Available voices
+  | 'voice:list'          // Server -> Client: Available voices
+  // Timeout management (Milestone 3)
+  | 'debate:timeout_warning'  // Server -> Client: Warning before auto-end
+  | 'debate:timeout_end';     // Server -> Client: Debate ended due to timeout
 
 // Base WebSocket message
 export interface WSMessage<T = unknown> {
@@ -515,4 +518,23 @@ export interface VoiceListRequestPayload {
 export interface VoiceListPayload {
   voices: VoiceConfig[];
   language: LanguageCode;
+}
+
+// ==========================================
+// Timeout Management Types
+// ==========================================
+
+export type TimeoutReason = 'inactivity' | 'max_duration';
+
+// Timeout warning payload
+export interface TimeoutWarningPayload {
+  reason: TimeoutReason;
+  secondsRemaining: number;  // Seconds until auto-end
+  message: string;
+}
+
+// Timeout end payload
+export interface TimeoutEndPayload {
+  reason: TimeoutReason;
+  message: string;
 }

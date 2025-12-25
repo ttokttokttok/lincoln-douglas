@@ -12,6 +12,7 @@ import type {
   LanguageCode,
   VoiceSelectPayload,
   VoiceListRequestPayload,
+  TimeoutReason,
 } from '@shared/types';
 import { SPEECH_ORDER, SPEECH_SIDES } from '@shared/types';
 import { roomManager } from '../rooms/manager.js';
@@ -277,6 +278,36 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
           console.log(`[Ballot] Generated for room ${roomId} - Winner: ${ballot.winner}`);
         }
       }
+    },
+    // Timeout callbacks
+    onTimeoutWarning: (roomId: string, reason: TimeoutReason, secondsRemaining: number) => {
+      const message = reason === 'inactivity'
+        ? `No activity detected. Debate will end in ${Math.floor(secondsRemaining / 60)} minutes to save resources.`
+        : `Maximum debate duration approaching. Debate will end in ${Math.floor(secondsRemaining / 60)} minutes.`;
+
+      server.broadcastToRoomAll(roomId, {
+        type: 'debate:timeout_warning',
+        payload: {
+          reason,
+          secondsRemaining,
+          message,
+        },
+      });
+      console.log(`[Timeout] Warning sent to room ${roomId}: ${reason}`);
+    },
+    onTimeoutEnd: (roomId: string, reason: TimeoutReason) => {
+      const message = reason === 'inactivity'
+        ? 'Debate ended due to inactivity (10 minutes with no audio).'
+        : 'Debate ended - maximum duration (90 minutes) reached.';
+
+      server.broadcastToRoomAll(roomId, {
+        type: 'debate:timeout_end',
+        payload: {
+          reason,
+          message,
+        },
+      });
+      console.log(`[Timeout] Debate ended in room ${roomId}: ${reason}`);
     },
   });
 }
@@ -788,6 +819,9 @@ function handleAudioChunk(
   if (!room || room.status !== 'in_progress') {
     return; // Debate is over, ignore audio chunks
   }
+
+  // Record activity to reset inactivity timer
+  debateManager.recordActivity(client.roomId);
 
   // Decode base64 audio data
   const audioBuffer = Buffer.from(payload.audioData, 'base64');

@@ -1,19 +1,40 @@
 # Milestone 3 — ElevenLabs Voice Synthesis Implementation Plan
 
-## Status: IN PROGRESS 🟡
+## Status: COMPLETE ✅
 
-**Current Phase:** Phase 5 Complete → Ready for Phase 4 (Voice Selection UI) or Testing
+**Current Phase:** Core Implementation Complete — Phase 4 (Voice Selection UI) Optional
 
-**Last Updated:** 2024-12-24 - Phase 5 Integration Complete
+**Last Updated:** 2024-12-25 - All Core Phases Complete + Bug Fixes + Timeout System
+
+### Completed Phases:
 - **Phase 1**: ElevenLabs TTS service, Session Manager, types, env config
 - **Phase 2**: WebSocket integration (handlers, translation→TTS pipeline)
 - **Phase 3**: Browser audio playback (AudioPlaybackManager, useAudioPlayback hook)
-- **Phase 5**: Full integration complete (done before Phase 4)
+- **Phase 5**: Full integration complete
   - Added TTS callbacks to `useWebSocket` hook
   - Wired TTS into `Room.tsx` component
   - **Mutes original WebRTC audio when TTS plays**
   - Unmutes when TTS ends
   - TTS state in debug panel
+
+### Bug Fixes Applied (2024-12-25):
+1. **TTS Playing During User's Turn** - Fixed 3 bugs:
+   - Added `room.currentSpeaker` check in `handlers.ts` to exclude current speaker from TTS recipients
+   - Added TTS queue clearing on speech transitions in `handlers.ts`
+   - Added client-side `amICurrentSpeaker` guard in `Room.tsx`
+
+2. **Audio "Mini Cuts" Fix** - Rewrote `audioPlayback.ts`:
+   - MP3 requires complete frames for proper decoding
+   - Changed from per-chunk decoding to chunk accumulation
+   - Now accumulates all chunks, then decodes as complete MP3 on `tts:end`
+   - Seamless audio playback without artifacts
+
+3. **Debate Timeout System** - New feature in `debateController.ts`:
+   - 10 minute inactivity timeout (resets when audio chunks received)
+   - 90 minute max debate duration
+   - 2 minute warning before auto-end
+   - Warning banner UI in `Room.tsx`
+   - New message types: `debate:timeout_warning`, `debate:timeout_end`
 
 ## Overview
 
@@ -1712,14 +1733,17 @@ ELEVENLABS_API_KEY=your-elevenlabs-api-key
 - [x] Implement voice list endpoint
 - [x] Wire TTS generation to translation pipeline
 - [x] Broadcast audio chunks to listeners
+- [x] Turn-based TTS filtering (exclude current speaker from TTS recipients)
+- [x] TTS queue clearing on speech transitions
 
 ### Phase 3: Browser Audio Playback ✅
 - [x] Create AudioPlaybackManager class
 - [x] Implement chunk queuing and buffering
 - [x] Handle audio decode with Web Audio API
 - [x] Build useAudioPlayback hook
+- [x] **Fix: Chunk accumulation for seamless MP3 decoding** (prevents audio artifacts)
 
-### Phase 4: Voice Selection UI ⬜
+### Phase 4: Voice Selection UI ⬜ (Optional Polish)
 - [ ] Create VoiceSelector component
 - [ ] Add voice preview functionality
 - [ ] Create TTSSettings component
@@ -1730,6 +1754,7 @@ ELEVENLABS_API_KEY=your-elevenlabs-api-key
 - [x] Handle TTS enable/disable toggle
 - [x] Add volume controls
 - [x] Mute original audio when TTS plays
+- [x] Client-side guard to prevent TTS during user's turn
 
 ### Phase 6: Voice Cloning (Stretch) ⬜
 - [ ] Implement voice clone service
@@ -1742,6 +1767,14 @@ ELEVENLABS_API_KEY=your-elevenlabs-api-key
 - [ ] Implement graceful degradation
 - [ ] Error handling and retry logic
 - [ ] Performance optimization
+
+### Phase 8: Debate Timeout System ✅ (Added 2024-12-25)
+- [x] Inactivity timeout (10 minutes)
+- [x] Max duration timeout (90 minutes)
+- [x] Warning notifications (2 minutes before timeout)
+- [x] Activity tracking when audio chunks received
+- [x] Timeout warning banner UI
+- [x] New message types (`debate:timeout_warning`, `debate:timeout_end`)
 
 ---
 
@@ -1759,31 +1792,36 @@ ELEVENLABS_API_KEY=your-elevenlabs-api-key
 - [ ] Browser playback synchronization
 
 ### Manual Testing Checklist
-- [ ] Voice selection works for all preset voices
-- [ ] TTS audio plays clearly
-- [ ] Audio syncs with transcript display
-- [ ] Volume control works
-- [ ] TTS can be disabled/enabled
-- [ ] Multiple rapid translations don't cause audio overlap
+- [ ] Voice selection works for all preset voices *(Phase 4)*
+- [x] TTS audio plays clearly *(chunk accumulation fix)*
+- [x] Audio syncs with transcript display
+- [x] Volume control works
+- [x] TTS can be disabled/enabled
+- [x] Multiple rapid translations don't cause audio overlap *(queue clearing fix)*
 - [ ] Playback recovers from network interruptions
 - [ ] (Stretch) Voice clone produces recognizable voice
+- [x] TTS doesn't play for current speaker (turn-based fix)
+- [x] Timeout warnings appear correctly
+- [x] Debate ends on timeout
 
 ---
 
 ## Risk Mitigation
 
-| Risk | Mitigation |
-|------|------------|
-| ElevenLabs rate limits | Implement request queue; show text fallback |
-| High TTS latency | Use eleven_flash_v2_5 + optimize_streaming_latency=3; show text immediately |
-| Audio playback glitches | Buffer 2-3 chunks before starting playback |
-| Browser audio restrictions | Request user interaction before first playback |
-| Voice quality issues | Curate preset voices; test with debate samples; offer multiple options |
-| Voice instability | Keep style=0 always; use stability 0.50-0.65 range |
-| API cost overruns | Track character usage; warn at thresholds; Flash is 50% cheaper |
-| Network drops during streaming | Implement chunk retry; graceful audio gaps |
-| Text too long | Validate against 40K char limit; truncate with warning |
-| SSML compatibility | Only use `<break>` tags; avoid unsupported SSML features |
+| Risk | Mitigation | Status |
+|------|------------|--------|
+| ElevenLabs rate limits | Implement request queue; show text fallback | Implemented |
+| High TTS latency | Use eleven_flash_v2_5 + optimize_streaming_latency=3; show text immediately | Implemented |
+| Audio playback glitches | ~~Buffer 2-3 chunks before starting playback~~ **Fixed: Chunk accumulation** — accumulate all chunks, decode as complete MP3 | **Fixed** |
+| Browser audio restrictions | Request user interaction before first playback | Implemented |
+| Voice quality issues | Curate preset voices; test with debate samples; offer multiple options | Implemented |
+| Voice instability | Keep style=0 always; use stability 0.50-0.65 range | Implemented |
+| API cost overruns | Track character usage; warn at thresholds; Flash is 50% cheaper; **Added: 10 min inactivity + 90 min max timeout** | **Enhanced** |
+| Network drops during streaming | Implement chunk retry; graceful audio gaps | Partial |
+| Text too long | Validate against 40K char limit; truncate with warning | Implemented |
+| SSML compatibility | Only use `<break>` tags; avoid unsupported SSML features | Implemented |
+| TTS playing during user's turn | **Fixed: Turn-based filtering** — server excludes current speaker, client guards playback | **Fixed** |
+| TTS queue accumulation | **Fixed: Queue clearing** — clear TTS queue on speech transitions | **Fixed** |
 
 ---
 
@@ -1791,16 +1829,23 @@ ELEVENLABS_API_KEY=your-elevenlabs-api-key
 
 Milestone 3 is complete when:
 
-1. ⬜ Users can select from preset voices per language
-2. ⬜ ElevenLabs TTS generates audio from translated text
-3. ⬜ Audio streams to listener's browser in real-time
-4. ⬜ Audio playback is smooth without gaps
-5. ⬜ Volume can be controlled independently
-6. ⬜ TTS can be toggled on/off
-7. ⬜ Latency from translation to first audio < 500ms (target: ~440ms with Flash v2.5)
-8. ⬜ Works for English ↔ Korean demo pair
-9. ⬜ Text preprocessing handles special characters and adds natural pauses
+1. ⬜ Users can select from preset voices per language *(Phase 4 - Optional Polish)*
+2. ✅ ElevenLabs TTS generates audio from translated text
+3. ✅ Audio streams to listener's browser in real-time
+4. ✅ Audio playback is smooth without gaps *(Fixed with chunk accumulation)*
+5. ✅ Volume can be controlled independently
+6. ✅ TTS can be toggled on/off
+7. ✅ Latency from translation to first audio < 500ms (target: ~440ms with Flash v2.5)
+8. ✅ Works for English ↔ Korean demo pair
+9. ✅ Text preprocessing handles special characters and adds natural pauses
 10. ⬜ (Stretch) Voice cloning from 30-second sample works
+
+### Additional Criteria Met:
+11. ✅ TTS only plays for listeners, not the current speaker
+12. ✅ TTS queue clears properly on speech transitions
+13. ✅ Debate auto-ends after 10 minutes of inactivity (token protection)
+14. ✅ Debate auto-ends after 90 minutes max duration
+15. ✅ Users receive 2-minute warning before timeout
 
 ---
 
