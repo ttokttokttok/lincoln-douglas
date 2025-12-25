@@ -6,6 +6,8 @@ import { setupWebSocketServer } from './websocket/server.js';
 import { setupRoutes } from './api/routes.js';
 import { geminiSttService } from './stt/geminiStt.js';
 import { translationService } from './translation/geminiTranslation.js';
+import { argumentExtractor } from './flow/argumentExtractor.js';
+import { ballotGenerator } from './flow/ballotGenerator.js';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -26,10 +28,12 @@ setupWebSocketServer(server);
 // Initialize Gemini services
 const sttReady = geminiSttService.initialize();
 const translationReady = translationService.initialize();
+const extractorReady = argumentExtractor.initialize();
+const ballotReady = ballotGenerator.initialize();
 
-console.log(`[Services] STT: ${sttReady ? '✓' : '✗'}, Translation: ${translationReady ? '✓' : '✗'}`);
-if (!sttReady || !translationReady) {
-  console.log('[Services] Set GEMINI_API_KEY to enable STT and translation');
+console.log(`[Services] STT: ${sttReady ? '✓' : '✗'}, Translation: ${translationReady ? '✓' : '✗'}, Extractor: ${extractorReady ? '✓' : '✗'}, Ballot: ${ballotReady ? '✓' : '✗'}`);
+if (!sttReady) {
+  console.log('[Services] Set GEMINI_API_KEY to enable all Gemini services');
 }
 
 // Start server

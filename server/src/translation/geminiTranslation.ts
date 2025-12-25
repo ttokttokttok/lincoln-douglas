@@ -7,6 +7,7 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { LanguageCode, SpeechRole, Side } from '@shared/types';
+import { LANGUAGES } from '@shared/types';
 
 interface TranslationContext {
   resolution: string;
@@ -142,14 +143,8 @@ TRANSLATION:`;
    * Get language name from code
    */
   private getLanguageName(code: LanguageCode): string {
-    const names: Record<LanguageCode, string> = {
-      en: 'English',
-      ko: 'Korean',
-      ja: 'Japanese',
-      es: 'Spanish',
-      zh: 'Chinese (Mandarin)',
-    };
-    return names[code];
+    const lang = LANGUAGES.find(l => l.code === code);
+    return lang?.name || code;
   }
 
   /**

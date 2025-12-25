@@ -7,6 +7,7 @@
 
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import type { LanguageCode } from '@shared/types';
+import { LANGUAGES } from '@shared/types';
 
 // Buffer duration in milliseconds before sending to Gemini
 // Increased to 5 seconds to reduce API calls and avoid rate limits
@@ -296,14 +297,8 @@ If you cannot understand the audio or it's silent, return an empty string.`,
    * Get language name from code
    */
   private getLanguageName(code: LanguageCode): string {
-    const names: Record<LanguageCode, string> = {
-      en: 'English',
-      ko: 'Korean',
-      ja: 'Japanese',
-      es: 'Spanish',
-      zh: 'Chinese (Mandarin)',
-    };
-    return names[code];
+    const lang = LANGUAGES.find(l => l.code === code);
+    return lang?.name || code;
   }
 
   /**

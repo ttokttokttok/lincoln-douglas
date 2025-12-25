@@ -5,11 +5,44 @@
  * Buffers audio chunks and sends batches for transcription.
  */
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { LANGUAGES } from '@shared/types';
 // Buffer duration in milliseconds before sending to Gemini
-const BUFFER_DURATION_MS = 2000; // 2 seconds
+// Increased to 5 seconds to reduce API calls and avoid rate limits
+const BUFFER_DURATION_MS = 5000; // 5 seconds
 // At 16kHz, 16-bit mono: 32,000 bytes per second
 const BYTES_PER_SECOND = 32000;
 const BUFFER_SIZE_BYTES = (BUFFER_DURATION_MS / 1000) * BYTES_PER_SECOND;
+/**
+ * Create a WAV header for PCM audio data
+ * Gemini requires proper audio format, not raw PCM
+ */
+function createWavHeader(dataLength, sampleRate = 16000, channels = 1, bitsPerSample = 16) {
+    const header = Buffer.alloc(44);
+    // RIFF header
+    header.write('RIFF', 0);
+    header.writeUInt32LE(36 + dataLength, 4); // File size - 8
+    header.write('WAVE', 8);
+    // fmt subchunk
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16); // Subchunk1 size (16 for PCM)
+    header.writeUInt16LE(1, 20); // Audio format (1 = PCM)
+    header.writeUInt16LE(channels, 22); // Number of channels
+    header.writeUInt32LE(sampleRate, 24); // Sample rate
+    header.writeUInt32LE(sampleRate * channels * bitsPerSample / 8, 28); // Byte rate
+    header.writeUInt16LE(channels * bitsPerSample / 8, 32); // Block align
+    header.writeUInt16LE(bitsPerSample, 34); // Bits per sample
+    // data subchunk
+    header.write('data', 36);
+    header.writeUInt32LE(dataLength, 40); // Data size
+    return header;
+}
+/**
+ * Convert raw PCM buffer to WAV format
+ */
+function pcmToWav(pcmBuffer, sampleRate = 16000) {
+    const header = createWavHeader(pcmBuffer.length, sampleRate);
+    return Buffer.concat([header, pcmBuffer]);
+}
 class GeminiSTTService {
     genAI = null;
     model = null;
@@ -103,8 +136,7 @@ class GeminiSTTService {
             return;
         }
         // Combine all chunks into one buffer
-        const combinedBuffer = Buffer.concat(session.audioBuffer);
-        const base64Audio = combinedBuffer.toString('base64');
+        const pcmBuffer = Buffer.concat(session.audioBuffer);
         // Clear the buffer
         session.audioBuffer = [];
         session.bufferSize = 0;
@@ -113,10 +145,17 @@ class GeminiSTTService {
             clearTimeout(session.flushTimer);
             session.flushTimer = null;
         }
+        // Need minimum audio length for meaningful transcription (~0.5 seconds)
+        const minBytes = BYTES_PER_SECOND * 0.5; // 16KB minimum
+        if (pcmBuffer.length < minBytes) {
+            console.log(`[GeminiSTT] Audio too short (${pcmBuffer.length} bytes), skipping`);
+            return;
+        }
         // Transcribe
         try {
-            const result = await this.transcribeAudio(base64Audio, session.language);
+            const result = await this.transcribeAudio(pcmBuffer, session.language);
             if (result && result.text.trim()) {
+                console.log(`[GeminiSTT] Transcribed: "${result.text.substring(0, 50)}..."`);
                 this.onTranscription?.(participantId, result);
             }
         }
@@ -126,17 +165,21 @@ class GeminiSTTService {
     }
     /**
      * Transcribe audio using Gemini
+     * Takes raw PCM buffer, converts to WAV, and sends to Gemini
      */
-    async transcribeAudio(base64Audio, language) {
+    async transcribeAudio(pcmBuffer, language) {
         if (!this.model) {
             return null;
         }
+        // Convert PCM to WAV format (Gemini requires proper audio format)
+        const wavBuffer = pcmToWav(pcmBuffer);
+        const base64Audio = wavBuffer.toString('base64');
         const languageName = this.getLanguageName(language);
         try {
             const result = await this.model.generateContent([
                 {
                     inlineData: {
-                        mimeType: 'audio/pcm;rate=16000',
+                        mimeType: 'audio/wav',
                         data: base64Audio,
                     },
                 },
@@ -156,7 +199,9 @@ If you cannot understand the audio or it's silent, return an empty string.`,
         }
         catch (error) {
             // Handle specific errors
-            if (error.message?.includes('Could not find audio')) {
+            if (error.message?.includes('Could not find audio') ||
+                error.message?.includes('no audio') ||
+                error.message?.includes('silent')) {
                 // Silent or no audio detected
                 return null;
             }
@@ -186,14 +231,8 @@ If you cannot understand the audio or it's silent, return an empty string.`,
      * Get language name from code
      */
     getLanguageName(code) {
-        const names = {
-            en: 'English',
-            ko: 'Korean',
-            ja: 'Japanese',
-            es: 'Spanish',
-            zh: 'Chinese (Mandarin)',
-        };
-        return names[code];
+        const lang = LANGUAGES.find(l => l.code === code);
+        return lang?.name || code;
     }
     /**
      * Check if service is ready

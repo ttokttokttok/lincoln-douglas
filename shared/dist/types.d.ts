@@ -1,4 +1,4 @@
-export type LanguageCode = 'en' | 'ko' | 'ja' | 'es' | 'zh';
+export type LanguageCode = 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'ru' | 'zh' | 'ja' | 'ko' | 'nl' | 'pl' | 'uk' | 'cs' | 'ro' | 'hu' | 'el' | 'sv' | 'da' | 'fi' | 'no' | 'bg' | 'hr' | 'sk' | 'sl' | 'et' | 'lv' | 'lt' | 'hi' | 'bn' | 'ta' | 'te' | 'mr' | 'gu' | 'kn' | 'ml' | 'pa' | 'th' | 'vi' | 'id' | 'ms' | 'tl' | 'my' | 'km' | 'lo' | 'ar' | 'he' | 'fa' | 'tr' | 'ur' | 'sw' | 'am' | 'ha' | 'yo' | 'ig' | 'zu' | 'af' | 'sq' | 'hy' | 'az' | 'eu' | 'be' | 'bs' | 'ca' | 'cy' | 'eo' | 'gl' | 'ka' | 'is' | 'mk' | 'mn' | 'ne' | 'ps' | 'si' | 'so' | 'tg' | 'uz' | 'xh';
 export type Side = 'AFF' | 'NEG';
 export type RoomStatus = 'waiting' | 'ready' | 'in_progress' | 'completed';
 export type SpeechRole = 'AC' | 'NC' | '1AR' | 'NR' | '2AR';
@@ -97,6 +97,7 @@ export interface STTInterimPayload {
 }
 export interface STTFinalPayload {
     speakerId: string;
+    speakerName: string;
     speechId: string;
     text: string;
     language: LanguageCode;
@@ -113,6 +114,7 @@ export interface TranslationInterimPayload {
 }
 export interface TranslationCompletePayload {
     speakerId: string;
+    speakerName: string;
     speechId: string;
     originalText: string;
     originalLanguage: LanguageCode;
@@ -131,4 +133,51 @@ export interface LanguageInfo {
     flag: string;
 }
 export declare const LANGUAGES: LanguageInfo[];
+export type ArgumentType = 'value' | 'criterion' | 'contention' | 'subpoint' | 'response' | 'rebuttal' | 'extension';
+export type ArgumentStatus = 'introduced' | 'extended' | 'answered' | 'dropped' | 'turned';
+export interface Argument {
+    id: string;
+    speech: SpeechRole;
+    side: Side;
+    title: string;
+    claim: string;
+    warrant: string;
+    impact: string;
+    type: ArgumentType;
+    status: ArgumentStatus;
+    respondsTo: string[];
+    createdAt: number;
+}
+export interface FlowState {
+    roomId: string;
+    arguments: Argument[];
+    speechTranscripts: Record<SpeechRole, string>;
+}
+export interface FlowStatePayload {
+    flowState: FlowState;
+}
+export interface VotingIssue {
+    issue: string;
+    analysis: string;
+    winner: Side;
+}
+export interface Ballot {
+    roomId: string;
+    resolution: string;
+    generatedAt: number;
+    winner: Side;
+    winnerName: string;
+    loserName: string;
+    rfdSummary: string;
+    rfdDetails: string;
+    speakerPoints: {
+        AFF: number;
+        NEG: number;
+    };
+    votingIssues: VotingIssue[];
+}
+export interface BallotReadyPayload {
+    ballot: Ballot;
+    flowState: FlowState;
+}
 //# sourceMappingURL=types.d.ts.map

@@ -1,9 +1,13 @@
+import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import { setupWebSocketServer } from './websocket/server.js';
 import { setupRoutes } from './api/routes.js';
 import { geminiSttService } from './stt/geminiStt.js';
+import { translationService } from './translation/geminiTranslation.js';
+import { argumentExtractor } from './flow/argumentExtractor.js';
+import { ballotGenerator } from './flow/ballotGenerator.js';
 const app = express();
 const PORT = process.env.PORT || 3001;
 // Middleware
@@ -15,13 +19,14 @@ setupRoutes(app);
 const server = createServer(app);
 // Setup WebSocket server
 setupWebSocketServer(server);
-// Initialize Gemini STT service
+// Initialize Gemini services
 const sttReady = geminiSttService.initialize();
-if (sttReady) {
-    console.log('Gemini STT service initialized');
-}
-else {
-    console.log('Gemini STT service not available (set GEMINI_API_KEY to enable)');
+const translationReady = translationService.initialize();
+const extractorReady = argumentExtractor.initialize();
+const ballotReady = ballotGenerator.initialize();
+console.log(`[Services] STT: ${sttReady ? '✓' : '✗'}, Translation: ${translationReady ? '✓' : '✗'}, Extractor: ${extractorReady ? '✓' : '✗'}, Ballot: ${ballotReady ? '✓' : '✗'}`);
+if (!sttReady) {
+    console.log('[Services] Set GEMINI_API_KEY to enable all Gemini services');
 }
 // Start server
 server.listen(PORT, () => {

@@ -17,6 +17,9 @@ import { debateManager } from '../timer/debateController.js';
 import { audioSessionManager } from '../audio/sessionManager.js';
 import { geminiSttService } from '../stt/geminiStt.js';
 import { translationService } from '../translation/geminiTranslation.js';
+import { flowStateManager } from '../flow/flowStateManager.js';
+import { argumentExtractor } from '../flow/argumentExtractor.js';
+import { ballotGenerator } from '../flow/ballotGenerator.js';
 import type { ExtendedWebSocket, SignalingServer } from './server.js';
 
 // Store server reference for callbacks
@@ -36,8 +39,8 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
     const participant = room?.participants.get(participantId);
     if (!room || !participant) return;
 
-    // Get current speech
-    const currentSpeech = room.currentSpeech || 'AC';
+    // Get current speech (default to AC if not set)
+    const currentSpeech = (room.currentSpeech ?? 'AC') as SpeechRole;
 
     // Broadcast transcript to all participants in the room
     server.broadcastToRoomAll(roomId, {
@@ -53,6 +56,9 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
     });
 
     console.log(`[STT] ${participant.displayName}: "${result.text.substring(0, 50)}${result.text.length > 50 ? '...' : ''}"`);
+
+    // Store transcript in flow state for later argument extraction
+    flowStateManager.addTranscript(roomId, currentSpeech, result.text);
 
     // Translate for listeners who speak different languages
     if (translationService.isReady()) {
@@ -134,11 +140,31 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
         });
       }
     },
-    onSpeechEnd: (roomId: string, speech: SpeechRole, nextSpeech: SpeechRole | null) => {
+    onSpeechEnd: async (roomId: string, speech: SpeechRole, nextSpeech: SpeechRole | null) => {
       server.broadcastToRoomAll(roomId, {
         type: 'speech:end',
         payload: { speech, nextSpeech },
       });
+
+      // Extract arguments from the completed speech
+      if (argumentExtractor.isReady()) {
+        const room = roomManager.getRoom(roomId);
+        if (room) {
+          const transcript = flowStateManager.getSpeechTranscript(roomId, speech);
+          const priorArguments = flowStateManager.getArguments(roomId);
+          
+          const extractedArgs = await argumentExtractor.extractArguments(transcript, {
+            resolution: room.resolution,
+            speech,
+            priorArguments,
+          });
+          
+          if (extractedArgs.length > 0) {
+            flowStateManager.addArguments(roomId, extractedArgs);
+            console.log(`[Flow] Extracted ${extractedArgs.length} arguments from ${speech}`);
+          }
+        }
+      }
     },
     onDebateStart: (roomId: string) => {
       const room = roomManager.getRoom(roomId);
@@ -150,17 +176,78 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
       }
       console.log(`Debate started in room ${roomId}`);
     },
-    onDebateEnd: (roomId: string) => {
+    onDebateEnd: async (roomId: string) => {
       const room = roomManager.getRoom(roomId);
       if (room) {
         room.currentSpeech = null;
         room.currentSpeaker = null;
+        room.status = 'completed';
         server.broadcastToRoomAll(roomId, {
           type: 'room:state',
           payload: { room: roomManager.serializeRoom(room) },
         });
       }
       console.log(`Debate ended in room ${roomId}`);
+
+      // IMPORTANT: Clean up all audio/STT sessions to stop Gemini API calls
+      // This prevents wasting credits after the debate ends
+      const roomSessions = audioSessionManager.getRoomSessions(roomId);
+      for (const session of roomSessions) {
+        console.log(`[Cleanup] Ending audio session for ${session.participantId}`);
+        audioSessionManager.endSession(session.participantId);
+        await geminiSttService.endSession(session.participantId);
+      }
+      console.log(`[Cleanup] Cleaned up ${roomSessions.length} audio session(s) for room ${roomId}`);
+
+      // Generate ballot and flow state
+      if (ballotGenerator.isReady() && room) {
+        // Wait briefly for any in-flight 2AR extraction from onSpeechEnd callback
+        // (The onSpeechEnd is async but not awaited by the timer callback chain)
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Ensure 2AR arguments are extracted (in case the async onSpeechEnd hasn't completed)
+        const existing2ARArgs = flowStateManager.getArgumentsBySpeech(roomId, '2AR');
+        if (existing2ARArgs.length === 0 && argumentExtractor.isReady()) {
+          const transcript = flowStateManager.getSpeechTranscript(roomId, '2AR');
+          if (transcript && transcript.length > 50) {
+            console.log('[Flow] Ensuring 2AR extraction before ballot...');
+            const priorArguments = flowStateManager.getArguments(roomId);
+            const extractedArgs = await argumentExtractor.extractArguments(transcript, {
+              resolution: room.resolution,
+              speech: '2AR',
+              priorArguments,
+            });
+            if (extractedArgs.length > 0) {
+              flowStateManager.addArguments(roomId, extractedArgs);
+              console.log(`[Flow] Extracted ${extractedArgs.length} arguments from 2AR (fallback)`);
+            }
+          }
+        }
+
+        const flowState = flowStateManager.getFlowState(roomId);
+        const participants = Array.from(room.participants.values());
+        const affParticipant = participants.find(p => p.side === 'AFF');
+        const negParticipant = participants.find(p => p.side === 'NEG');
+
+        const ballot = await ballotGenerator.generateBallot({
+          resolution: room.resolution,
+          affName: affParticipant?.displayName || 'Affirmative',
+          negName: negParticipant?.displayName || 'Negative',
+          flowState,
+        });
+
+        if (ballot) {
+          // Broadcast ballot and flow to all participants
+          server.broadcastToRoomAll(roomId, {
+            type: 'ballot:ready',
+            payload: {
+              ballot,
+              flowState,
+            },
+          });
+          console.log(`[Ballot] Generated for room ${roomId} - Winner: ${ballot.winner}`);
+        }
+      }
     },
   });
 }
@@ -656,6 +743,12 @@ function handleAudioChunk(
 ): void {
   if (!client.roomId) {
     return; // Silently ignore if not in room
+  }
+
+  // Check if debate is still in progress (prevent wasting Gemini credits after debate ends)
+  const room = roomManager.getRoom(client.roomId);
+  if (!room || room.status !== 'in_progress') {
+    return; // Debate is over, ignore audio chunks
   }
 
   // Decode base64 audio data

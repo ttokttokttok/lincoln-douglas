@@ -38,13 +38,15 @@ A **real-time cross-language debate platform** where two debaters speaking diffe
 7. At round end: bilingual ballot + speaker points
 
 ### Supported Languages (MVP)
-Start with high-quality STT/TTS language pairs:
-- English ↔ Korean (primary demo)
-- English ↔ Japanese
-- English ↔ Spanish
-- English ↔ Mandarin
+Gemini 2.0 Flash supports 85 languages for STT and translation:
+- **Primary demo:** English ↔ Korean
+- **Major languages:** Japanese, Spanish, Mandarin, French, German, Italian, Portuguese, Russian
+- **Asian:** Hindi, Thai, Vietnamese, Indonesian, Filipino, Bengali, Tamil, Telugu, and more
+- **European:** Dutch, Polish, Ukrainian, Greek, Swedish, Danish, Finnish, Czech, Romanian, etc.
+- **Middle Eastern:** Arabic, Hebrew, Persian, Turkish, Urdu
+- **African:** Swahili, Amharic, Hausa, Zulu
 
-(Expand based on ElevenLabs voice availability and Google STT quality)
+Full list of 85 languages available via searchable dropdown selector.
 
 ### Round Format (Simplified for MVP)
 Keep timing tight for demo purposes:
@@ -438,16 +440,17 @@ GET    /api/rooms/:roomId/recording  Get recording with all audio tracks
 - [x] Debate flow (AC → NC → 1AR → NR → 2AR, no CX)
 - [x] Permission controls (only speaker can end speech, only next speaker can start)
 
-### Milestone 2 — Real-Time Translation + Flow Sheet 🔄 IN PROGRESS
+### Milestone 2 — Real-Time Translation + Flow Sheet ✅ COMPLETE
 > **See [MILESTONE_2.md](./MILESTONE_2.md) for detailed implementation plan**
 
-- [ ] Google STT streaming integration (multi-language)
-- [ ] Gemini translation with debate context
-- [ ] Dual transcript display (original + translated)
-- [ ] Argument extraction (CWI) from translated transcripts
-- [ ] Unified flow view (language-agnostic debate sheet)
-- [ ] Ballot generation at debate end
-- [ ] Latency measurement and display
+- [x] Gemini STT integration (5-second buffered transcription)
+- [x] Gemini translation with debate context (85 languages supported)
+- [x] Dual transcript display (original + translated with latency)
+- [x] Argument extraction (CWI) from translated transcripts
+- [x] Flow sheet display (5-column view at debate end)
+- [x] Ballot generation with RFD and speaker points
+- [x] Searchable language selector (85 languages)
+- [ ] Latency measurement and display (optional polish)
 
 ### Milestone 3 — ElevenLabs Voice Synthesis
 - [ ] Preset voice selection per language

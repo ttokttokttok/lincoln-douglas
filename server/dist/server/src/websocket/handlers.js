@@ -3,13 +3,17 @@ import { roomManager } from '../rooms/manager.js';
 import { debateManager } from '../timer/debateController.js';
 import { audioSessionManager } from '../audio/sessionManager.js';
 import { geminiSttService } from '../stt/geminiStt.js';
+import { translationService } from '../translation/geminiTranslation.js';
+import { flowStateManager } from '../flow/flowStateManager.js';
+import { argumentExtractor } from '../flow/argumentExtractor.js';
+import { ballotGenerator } from '../flow/ballotGenerator.js';
 // Store server reference for callbacks
 let serverRef = null;
 // Initialize debate callbacks and STT callbacks
 export function initializeDebateCallbacks(server) {
     serverRef = server;
     // Set up STT transcription callback
-    geminiSttService.setTranscriptionCallback((participantId, result) => {
+    geminiSttService.setTranscriptionCallback(async (participantId, result) => {
         // Find the room for this participant
         const roomId = server.getClientRoomId(participantId);
         if (!roomId)
@@ -18,13 +22,14 @@ export function initializeDebateCallbacks(server) {
         const participant = room?.participants.get(participantId);
         if (!room || !participant)
             return;
-        // Get current speech
-        const currentSpeech = room.currentSpeech || 'AC';
+        // Get current speech (default to AC if not set)
+        const currentSpeech = (room.currentSpeech ?? 'AC');
         // Broadcast transcript to all participants in the room
         server.broadcastToRoomAll(roomId, {
             type: 'stt:final',
             payload: {
                 speakerId: participantId,
+                speakerName: participant.displayName,
                 speechId: currentSpeech,
                 text: result.text,
                 language: result.language,
@@ -32,6 +37,49 @@ export function initializeDebateCallbacks(server) {
             },
         });
         console.log(`[STT] ${participant.displayName}: "${result.text.substring(0, 50)}${result.text.length > 50 ? '...' : ''}"`);
+        // Store transcript in flow state for later argument extraction
+        flowStateManager.addTranscript(roomId, currentSpeech, result.text);
+        // Translate for listeners who speak different languages
+        if (translationService.isReady()) {
+            // Find the other participant's language (the listener)
+            const otherParticipants = Array.from(room.participants.values())
+                .filter(p => p.id !== participantId);
+            // Get unique target languages based on what listeners want to hear
+            // Use listeningLanguage (what they want to hear) not speakingLanguage
+            const targetLanguages = [...new Set(otherParticipants
+                    .map(p => p.listeningLanguage)
+                    .filter(lang => lang !== result.language))];
+            // Translate to each unique target language
+            for (const targetLanguage of targetLanguages) {
+                try {
+                    const translationResult = await translationService.translate(result.text, result.language, targetLanguage, {
+                        resolution: room.resolution,
+                        currentSpeech,
+                        speakerSide: participant.side || 'AFF',
+                        speakerName: participant.displayName,
+                    });
+                    if (translationResult) {
+                        // Broadcast translation to all participants
+                        server.broadcastToRoomAll(roomId, {
+                            type: 'translation:complete',
+                            payload: {
+                                speakerId: participantId,
+                                speakerName: participant.displayName,
+                                speechId: currentSpeech,
+                                originalText: result.text,
+                                originalLanguage: result.language,
+                                translatedText: translationResult.translatedText,
+                                targetLanguage,
+                                latencyMs: translationResult.latencyMs,
+                            },
+                        });
+                    }
+                }
+                catch (error) {
+                    console.error('[Translation] Error translating:', error);
+                }
+            }
+        }
     });
     debateManager.setCallbacks({
         onTimerUpdate: (roomId, timer) => {
@@ -59,11 +107,28 @@ export function initializeDebateCallbacks(server) {
                 });
             }
         },
-        onSpeechEnd: (roomId, speech, nextSpeech) => {
+        onSpeechEnd: async (roomId, speech, nextSpeech) => {
             server.broadcastToRoomAll(roomId, {
                 type: 'speech:end',
                 payload: { speech, nextSpeech },
             });
+            // Extract arguments from the completed speech
+            if (argumentExtractor.isReady()) {
+                const room = roomManager.getRoom(roomId);
+                if (room) {
+                    const transcript = flowStateManager.getSpeechTranscript(roomId, speech);
+                    const priorArguments = flowStateManager.getArguments(roomId);
+                    const extractedArgs = await argumentExtractor.extractArguments(transcript, {
+                        resolution: room.resolution,
+                        speech,
+                        priorArguments,
+                    });
+                    if (extractedArgs.length > 0) {
+                        flowStateManager.addArguments(roomId, extractedArgs);
+                        console.log(`[Flow] Extracted ${extractedArgs.length} arguments from ${speech}`);
+                    }
+                }
+            }
         },
         onDebateStart: (roomId) => {
             const room = roomManager.getRoom(roomId);
@@ -75,17 +140,42 @@ export function initializeDebateCallbacks(server) {
             }
             console.log(`Debate started in room ${roomId}`);
         },
-        onDebateEnd: (roomId) => {
+        onDebateEnd: async (roomId) => {
             const room = roomManager.getRoom(roomId);
             if (room) {
                 room.currentSpeech = null;
                 room.currentSpeaker = null;
+                room.status = 'completed';
                 server.broadcastToRoomAll(roomId, {
                     type: 'room:state',
                     payload: { room: roomManager.serializeRoom(room) },
                 });
             }
             console.log(`Debate ended in room ${roomId}`);
+            // Generate ballot and flow state
+            if (ballotGenerator.isReady() && room) {
+                const flowState = flowStateManager.getFlowState(roomId);
+                const participants = Array.from(room.participants.values());
+                const affParticipant = participants.find(p => p.side === 'AFF');
+                const negParticipant = participants.find(p => p.side === 'NEG');
+                const ballot = await ballotGenerator.generateBallot({
+                    resolution: room.resolution,
+                    affName: affParticipant?.displayName || 'Affirmative',
+                    negName: negParticipant?.displayName || 'Negative',
+                    flowState,
+                });
+                if (ballot) {
+                    // Broadcast ballot and flow to all participants
+                    server.broadcastToRoomAll(roomId, {
+                        type: 'ballot:ready',
+                        payload: {
+                            ballot,
+                            flowState,
+                        },
+                    });
+                    console.log(`[Ballot] Generated for room ${roomId} - Winner: ${ballot.winner}`);
+                }
+            }
         },
     });
 }

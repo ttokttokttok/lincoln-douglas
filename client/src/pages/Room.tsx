@@ -9,8 +9,9 @@ import { useTranscriptStore } from '../stores/transcriptStore';
 import { VideoPanel, VideoControls } from '../components/VideoPanel';
 import { Timer } from '../components/Timer';
 import { TranscriptPanel } from '../components/TranscriptPanel';
-import type { LanguageCode, Side, SpeechRole } from '@shared/types';
-import { LANGUAGES } from '@shared/types';
+import { BallotDisplay } from '../components/BallotDisplay';
+import { LanguageSelector } from '../components/LanguageSelector';
+import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload } from '@shared/types';
 
 export function Room() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -23,6 +24,9 @@ export function Room() {
   // Video/audio enabled state
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [isAudioOn, setIsAudioOn] = useState(true);
+
+  // Ballot state (shown at end of debate)
+  const [ballotData, setBallotData] = useState<BallotReadyPayload | null>(null);
 
   // Track if we're the initiator (first to join with stream ready)
   const isInitiatorRef = useRef(false);
@@ -156,6 +160,11 @@ export function Room() {
     });
   }, [addTranslation]);
 
+  // Handle ballot received (end of debate)
+  const handleBallot = useCallback((payload: BallotReadyPayload) => {
+    setBallotData(payload);
+  }, []);
+
   // WebSocket connection
   const {
     setReady,
@@ -179,6 +188,7 @@ export function Room() {
     onSignal: handleSignal,
     onTranscript: handleTranscript,
     onTranslation: handleTranslation,
+    onBallot: handleBallot,
   });
 
   // Set signal senders ref for usePeer callback
@@ -341,7 +351,17 @@ export function Room() {
   const isSideTaken = (side: Side) => opponent?.side === side;
 
   return (
-    <div className="min-h-screen p-4">
+    <>
+      {/* Ballot Display (shown at end of debate) */}
+      {ballotData && (
+        <BallotDisplay
+          ballot={ballotData.ballot}
+          flowState={ballotData.flowState}
+          onClose={() => setBallotData(null)}
+        />
+      )}
+
+      <div className="min-h-screen p-4">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="card mb-4">
@@ -544,43 +564,17 @@ export function Room() {
             </div>
 
             {/* Language Selection */}
-            <div className="space-y-3">
-              <div>
-                <p className="text-sm text-gray-400 mb-1">I speak:</p>
-                <div className="flex gap-1 flex-wrap">
-                  {LANGUAGES.map((lang) => (
-                    <button
-                      key={`speak-${lang.code}`}
-                      onClick={() => handleLanguageChange('speaking', lang.code)}
-                      className={`px-2 py-1 rounded text-sm ${
-                        myParticipant?.speakingLanguage === lang.code
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-gray-700 hover:bg-gray-600'
-                      }`}
-                    >
-                      {lang.flag} {lang.code.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <p className="text-sm text-gray-400 mb-1">I want to hear:</p>
-                <div className="flex gap-1 flex-wrap">
-                  {LANGUAGES.map((lang) => (
-                    <button
-                      key={`listen-${lang.code}`}
-                      onClick={() => handleLanguageChange('listening', lang.code)}
-                      className={`px-2 py-1 rounded text-sm ${
-                        myParticipant?.listeningLanguage === lang.code
-                          ? 'bg-green-600 text-white'
-                          : 'bg-gray-700 hover:bg-gray-600'
-                      }`}
-                    >
-                      {lang.flag} {lang.code.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <div className="grid grid-cols-2 gap-3">
+              <LanguageSelector
+                label="I speak:"
+                value={myParticipant?.speakingLanguage || 'en'}
+                onChange={(code) => handleLanguageChange('speaking', code)}
+              />
+              <LanguageSelector
+                label="I want to hear:"
+                value={myParticipant?.listeningLanguage || 'en'}
+                onChange={(code) => handleLanguageChange('listening', code)}
+              />
             </div>
 
             {/* Ready Button */}
@@ -657,5 +651,6 @@ export function Room() {
         )}
       </div>
     </div>
+    </>
   );
 }

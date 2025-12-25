@@ -1,5 +1,17 @@
-// Language codes supported
-export type LanguageCode = 'en' | 'ko' | 'ja' | 'es' | 'zh';
+// Language codes supported (Gemini 2.0 Flash supports 100+ languages)
+export type LanguageCode = 
+  // Major Languages
+  | 'en' | 'es' | 'fr' | 'de' | 'it' | 'pt' | 'ru' | 'zh' | 'ja' | 'ko'
+  // European
+  | 'nl' | 'pl' | 'uk' | 'cs' | 'ro' | 'hu' | 'el' | 'sv' | 'da' | 'fi' | 'no' | 'bg' | 'hr' | 'sk' | 'sl' | 'et' | 'lv' | 'lt'
+  // Asian
+  | 'hi' | 'bn' | 'ta' | 'te' | 'mr' | 'gu' | 'kn' | 'ml' | 'pa' | 'th' | 'vi' | 'id' | 'ms' | 'tl' | 'my' | 'km' | 'lo'
+  // Middle Eastern
+  | 'ar' | 'he' | 'fa' | 'tr' | 'ur'
+  // African
+  | 'sw' | 'am' | 'ha' | 'yo' | 'ig' | 'zu'
+  // Other
+  | 'af' | 'sq' | 'hy' | 'az' | 'eu' | 'be' | 'bs' | 'ca' | 'cy' | 'eo' | 'gl' | 'ka' | 'is' | 'mk' | 'mn' | 'ne' | 'ps' | 'si' | 'so' | 'tg' | 'uz' | 'xh';
 
 // Debate sides
 export type Side = 'AFF' | 'NEG';
@@ -219,9 +231,189 @@ export interface LanguageInfo {
 }
 
 export const LANGUAGES: LanguageInfo[] = [
+  // Major Languages (most common first)
   { code: 'en', name: 'English', nativeName: 'English', flag: '🇺🇸' },
-  { code: 'ko', name: 'Korean', nativeName: '한국어', flag: '🇰🇷' },
-  { code: 'ja', name: 'Japanese', nativeName: '日本語', flag: '🇯🇵' },
   { code: 'es', name: 'Spanish', nativeName: 'Español', flag: '🇪🇸' },
+  { code: 'fr', name: 'French', nativeName: 'Français', flag: '🇫🇷' },
+  { code: 'de', name: 'German', nativeName: 'Deutsch', flag: '🇩🇪' },
+  { code: 'it', name: 'Italian', nativeName: 'Italiano', flag: '🇮🇹' },
+  { code: 'pt', name: 'Portuguese', nativeName: 'Português', flag: '🇧🇷' },
+  { code: 'ru', name: 'Russian', nativeName: 'Русский', flag: '🇷🇺' },
   { code: 'zh', name: 'Chinese', nativeName: '中文', flag: '🇨🇳' },
+  { code: 'ja', name: 'Japanese', nativeName: '日本語', flag: '🇯🇵' },
+  { code: 'ko', name: 'Korean', nativeName: '한국어', flag: '🇰🇷' },
+  // European
+  { code: 'nl', name: 'Dutch', nativeName: 'Nederlands', flag: '🇳🇱' },
+  { code: 'pl', name: 'Polish', nativeName: 'Polski', flag: '🇵🇱' },
+  { code: 'uk', name: 'Ukrainian', nativeName: 'Українська', flag: '🇺🇦' },
+  { code: 'cs', name: 'Czech', nativeName: 'Čeština', flag: '🇨🇿' },
+  { code: 'ro', name: 'Romanian', nativeName: 'Română', flag: '🇷🇴' },
+  { code: 'hu', name: 'Hungarian', nativeName: 'Magyar', flag: '🇭🇺' },
+  { code: 'el', name: 'Greek', nativeName: 'Ελληνικά', flag: '🇬🇷' },
+  { code: 'sv', name: 'Swedish', nativeName: 'Svenska', flag: '🇸🇪' },
+  { code: 'da', name: 'Danish', nativeName: 'Dansk', flag: '🇩🇰' },
+  { code: 'fi', name: 'Finnish', nativeName: 'Suomi', flag: '🇫🇮' },
+  { code: 'no', name: 'Norwegian', nativeName: 'Norsk', flag: '🇳🇴' },
+  { code: 'bg', name: 'Bulgarian', nativeName: 'Български', flag: '🇧🇬' },
+  { code: 'hr', name: 'Croatian', nativeName: 'Hrvatski', flag: '🇭🇷' },
+  { code: 'sk', name: 'Slovak', nativeName: 'Slovenčina', flag: '🇸🇰' },
+  { code: 'sl', name: 'Slovenian', nativeName: 'Slovenščina', flag: '🇸🇮' },
+  { code: 'et', name: 'Estonian', nativeName: 'Eesti', flag: '🇪🇪' },
+  { code: 'lv', name: 'Latvian', nativeName: 'Latviešu', flag: '🇱🇻' },
+  { code: 'lt', name: 'Lithuanian', nativeName: 'Lietuvių', flag: '🇱🇹' },
+  // Asian
+  { code: 'hi', name: 'Hindi', nativeName: 'हिन्दी', flag: '🇮🇳' },
+  { code: 'bn', name: 'Bengali', nativeName: 'বাংলা', flag: '🇧🇩' },
+  { code: 'ta', name: 'Tamil', nativeName: 'தமிழ்', flag: '🇮🇳' },
+  { code: 'te', name: 'Telugu', nativeName: 'తెలుగు', flag: '🇮🇳' },
+  { code: 'mr', name: 'Marathi', nativeName: 'मराठी', flag: '🇮🇳' },
+  { code: 'gu', name: 'Gujarati', nativeName: 'ગુજરાતી', flag: '🇮🇳' },
+  { code: 'kn', name: 'Kannada', nativeName: 'ಕನ್ನಡ', flag: '🇮🇳' },
+  { code: 'ml', name: 'Malayalam', nativeName: 'മലയാളം', flag: '🇮🇳' },
+  { code: 'pa', name: 'Punjabi', nativeName: 'ਪੰਜਾਬੀ', flag: '🇮🇳' },
+  { code: 'th', name: 'Thai', nativeName: 'ไทย', flag: '🇹🇭' },
+  { code: 'vi', name: 'Vietnamese', nativeName: 'Tiếng Việt', flag: '🇻🇳' },
+  { code: 'id', name: 'Indonesian', nativeName: 'Bahasa Indonesia', flag: '🇮🇩' },
+  { code: 'ms', name: 'Malay', nativeName: 'Bahasa Melayu', flag: '🇲🇾' },
+  { code: 'tl', name: 'Filipino', nativeName: 'Tagalog', flag: '🇵🇭' },
+  { code: 'my', name: 'Burmese', nativeName: 'မြန်မာ', flag: '🇲🇲' },
+  { code: 'km', name: 'Khmer', nativeName: 'ភាសាខ្មែរ', flag: '🇰🇭' },
+  { code: 'lo', name: 'Lao', nativeName: 'ລາວ', flag: '🇱🇦' },
+  // Middle Eastern
+  { code: 'ar', name: 'Arabic', nativeName: 'العربية', flag: '🇸🇦' },
+  { code: 'he', name: 'Hebrew', nativeName: 'עברית', flag: '🇮🇱' },
+  { code: 'fa', name: 'Persian', nativeName: 'فارسی', flag: '🇮🇷' },
+  { code: 'tr', name: 'Turkish', nativeName: 'Türkçe', flag: '🇹🇷' },
+  { code: 'ur', name: 'Urdu', nativeName: 'اردو', flag: '🇵🇰' },
+  // African
+  { code: 'sw', name: 'Swahili', nativeName: 'Kiswahili', flag: '🇰🇪' },
+  { code: 'am', name: 'Amharic', nativeName: 'አማርኛ', flag: '🇪🇹' },
+  { code: 'ha', name: 'Hausa', nativeName: 'Hausa', flag: '🇳🇬' },
+  { code: 'yo', name: 'Yoruba', nativeName: 'Yorùbá', flag: '🇳🇬' },
+  { code: 'ig', name: 'Igbo', nativeName: 'Igbo', flag: '🇳🇬' },
+  { code: 'zu', name: 'Zulu', nativeName: 'isiZulu', flag: '🇿🇦' },
+  // Other
+  { code: 'af', name: 'Afrikaans', nativeName: 'Afrikaans', flag: '🇿🇦' },
+  { code: 'sq', name: 'Albanian', nativeName: 'Shqip', flag: '🇦🇱' },
+  { code: 'hy', name: 'Armenian', nativeName: 'Հայերdelays', flag: '🇦🇲' },
+  { code: 'az', name: 'Azerbaijani', nativeName: 'Azərbaycan', flag: '🇦🇿' },
+  { code: 'eu', name: 'Basque', nativeName: 'Euskara', flag: '🇪🇸' },
+  { code: 'be', name: 'Belarusian', nativeName: 'Беларуская', flag: '🇧🇾' },
+  { code: 'bs', name: 'Bosnian', nativeName: 'Bosanski', flag: '🇧🇦' },
+  { code: 'ca', name: 'Catalan', nativeName: 'Català', flag: '🇪🇸' },
+  { code: 'cy', name: 'Welsh', nativeName: 'Cymraeg', flag: '🏴󠁧󠁢󠁷󠁬󠁳󠁿' },
+  { code: 'eo', name: 'Esperanto', nativeName: 'Esperanto', flag: '🌍' },
+  { code: 'gl', name: 'Galician', nativeName: 'Galego', flag: '🇪🇸' },
+  { code: 'ka', name: 'Georgian', nativeName: 'ქართული', flag: '🇬🇪' },
+  { code: 'is', name: 'Icelandic', nativeName: 'Íslenska', flag: '🇮🇸' },
+  { code: 'mk', name: 'Macedonian', nativeName: 'Македонски', flag: '🇲🇰' },
+  { code: 'mn', name: 'Mongolian', nativeName: 'Монгол', flag: '🇲🇳' },
+  { code: 'ne', name: 'Nepali', nativeName: 'नेपाली', flag: '🇳🇵' },
+  { code: 'ps', name: 'Pashto', nativeName: 'پښتو', flag: '🇦🇫' },
+  { code: 'si', name: 'Sinhala', nativeName: 'සිංහල', flag: '🇱🇰' },
+  { code: 'so', name: 'Somali', nativeName: 'Soomaali', flag: '🇸🇴' },
+  { code: 'tg', name: 'Tajik', nativeName: 'Тоҷикӣ', flag: '🇹🇯' },
+  { code: 'uz', name: 'Uzbek', nativeName: 'Oʻzbek', flag: '🇺🇿' },
+  { code: 'xh', name: 'Xhosa', nativeName: 'isiXhosa', flag: '🇿🇦' },
 ];
+
+// ==========================================
+// Milestone 2: Argument Extraction & Flow
+// ==========================================
+
+// Argument types for debate flow
+export type ArgumentType = 
+  | 'value'       // Core value (e.g., "Justice")
+  | 'criterion'   // Standard for evaluation
+  | 'contention'  // Main argument
+  | 'subpoint'    // Supporting point under contention
+  | 'response'    // Direct response to opponent's argument
+  | 'rebuttal'    // Attack on opponent's reasoning
+  | 'extension';  // Extending own prior argument
+
+// Argument status in the flow
+export type ArgumentStatus = 
+  | 'introduced'  // First raised
+  | 'extended'    // Carried forward by same side
+  | 'answered'    // Responded to by opponent
+  | 'dropped'     // Not addressed when it should have been
+  | 'turned';     // Argument used against the side that made it
+
+// Claim-Warrant-Impact structure
+export interface Argument {
+  id: string;
+  speech: SpeechRole;
+  side: Side;
+  
+  // Argument content (in English for consistency)
+  title: string;          // Short label (e.g., "V: Justice", "C1: Dignity")
+  claim: string;          // The assertion being made
+  warrant: string;        // Evidence/reasoning supporting the claim
+  impact: string;         // Why this matters / consequence
+  
+  // Classification
+  type: ArgumentType;
+  status: ArgumentStatus;
+  
+  // Relationships
+  respondsTo: string[];   // IDs of arguments this responds to
+  
+  // Timestamps
+  createdAt: number;
+}
+
+// Flow state for a debate room
+export interface FlowState {
+  roomId: string;
+  arguments: Argument[];
+  
+  // Speech transcripts (accumulated for extraction)
+  speechTranscripts: Record<SpeechRole, string>;
+}
+
+// Flow state payload for WebSocket
+export interface FlowStatePayload {
+  flowState: FlowState;
+}
+
+// ==========================================
+// Milestone 2: Ballot Generation
+// ==========================================
+
+// Voting issue in the ballot
+export interface VotingIssue {
+  issue: string;          // Name of the clash point
+  analysis: string;       // How each side handled it
+  winner: Side;           // Who won this issue
+}
+
+// Generated ballot
+export interface Ballot {
+  roomId: string;
+  resolution: string;
+  generatedAt: number;
+  
+  // Decision
+  winner: Side;
+  winnerName: string;
+  loserName: string;
+  
+  // Reason for Decision
+  rfdSummary: string;     // One sentence
+  rfdDetails: string;     // Full explanation
+  
+  // Speaker Points (25-30 scale)
+  speakerPoints: {
+    AFF: number;
+    NEG: number;
+  };
+  
+  // Key voting issues
+  votingIssues: VotingIssue[];
+}
+
+// Ballot ready payload for WebSocket
+export interface BallotReadyPayload {
+  ballot: Ballot;
+  flowState: FlowState;
+}

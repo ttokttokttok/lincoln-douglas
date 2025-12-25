@@ -2,9 +2,9 @@
 
 ## Status: IN PROGRESS 🔄
 
-**Current Phase:** Phases 1-4 Complete ✅ → Phase 5 (Argument Extraction) or Phase 6 (Flow Sheet UI) next
+**Current Phase:** Phases 1-7 Complete ✅ → Phase 8 (Latency + Polish) optional
 
-**Last Updated:** 2024-12-24 - Phases 1-4 complete: Audio, STT, Translation, Dual Transcripts
+**Last Updated:** 2024-12-25 - Phases 1-7 complete: Full translation pipeline + Flow Sheet + Ballot + 85 Language Support
 
 ## Overview
 
@@ -108,7 +108,7 @@ This document details the implementation strategy for Milestone 2 of the Cross-L
 | Audio Format | **WAV (16-bit PCM with header)** | Gemini requires proper audio format, not raw PCM |
 | Sample Rate | **16000 Hz** | Standard for speech recognition |
 | Buffering | **5 seconds** | Balance between latency and API call frequency |
-| Languages | **en, ko, ja, es, zh** | Multimodal model supports all target languages |
+| Languages | **85 languages** | Full Gemini language support (en, ko, ja, es, zh, fr, de, ar, hi, vi, th, etc.) |
 
 **Why Gemini instead of Google Cloud STT:**
 - Single API key (no GCP project, service accounts, or JSON credentials)
@@ -1090,6 +1090,37 @@ export function LatencyDisplay({ sttLatency, translationLatency }: LatencyDispla
 
 ---
 
+### Searchable Language Selector
+
+A searchable dropdown component was added to handle the 85 supported languages:
+
+```typescript
+// client/src/components/LanguageSelector.tsx
+interface LanguageSelectorProps {
+  value: LanguageCode;
+  onChange: (code: LanguageCode) => void;
+  label: string;
+  disabled?: boolean;
+}
+
+// Features:
+// - Searchable input filters by name, native name, or code
+// - Shows flag emoji, English name, and native name
+// - Keyboard navigation (Enter to select, Escape to close)
+// - Click outside to close
+// - Shows count: "X of 85 languages"
+```
+
+**Supported Languages Include:**
+- **Major:** English, Spanish, French, German, Italian, Portuguese, Russian, Chinese, Japanese, Korean
+- **European:** Dutch, Polish, Ukrainian, Czech, Romanian, Hungarian, Greek, Swedish, Danish, Finnish, Norwegian, Bulgarian, Croatian, Slovak, Slovenian, Estonian, Latvian, Lithuanian
+- **Asian:** Hindi, Bengali, Tamil, Telugu, Marathi, Gujarati, Kannada, Malayalam, Punjabi, Thai, Vietnamese, Indonesian, Malay, Filipino, Burmese, Khmer, Lao
+- **Middle Eastern:** Arabic, Hebrew, Persian, Turkish, Urdu
+- **African:** Swahili, Amharic, Hausa, Yoruba, Igbo, Zulu
+- **Other:** Afrikaans, Albanian, Armenian, Azerbaijani, Basque, Belarusian, Bosnian, Catalan, Welsh, Esperanto, Galician, Georgian, Icelandic, Macedonian, Mongolian, Nepali, Pashto, Sinhala, Somali, Tajik, Uzbek, Xhosa
+
+---
+
 ## WebSocket Protocol Updates
 
 ### New Message Types
@@ -1241,23 +1272,50 @@ PORT=3001
 
 **Note:** All Phase 4 tasks were completed as part of Phase 3 implementation.
 
-### Phase 5: Argument Extraction ⬜
-- [ ] Implement ArgumentExtractorService
-- [ ] Create FlowState manager
-- [ ] Extract arguments at end of each speech
-- [ ] Link responses to prior arguments
+### Phase 5: Argument Extraction ✅ COMPLETE
+- [x] Implement ArgumentExtractorService
+- [x] Create FlowState manager
+- [x] Extract arguments at end of each speech
+- [x] Link responses to prior arguments
 
-### Phase 6: Flow Sheet UI ⬜
-- [ ] Create FlowSheet component
-- [ ] Implement FlowColumn component
-- [ ] Create ArgumentCard component
-- [ ] Add real-time flow updates
+**Files Created:**
+- `server/src/flow/flowStateManager.ts` - Tracks arguments and transcripts per room
+- `server/src/flow/argumentExtractor.ts` - Gemini-powered CWI extraction
 
-### Phase 7: Ballot Generation ⬜
-- [ ] Implement BallotGeneratorService
-- [ ] Create ballot display component
-- [ ] Generate ballot at debate end
-- [ ] Support bilingual RFD
+**Files Modified:**
+- `shared/src/types.ts` - Added Argument, FlowState, Ballot types
+- `server/src/websocket/handlers.ts` - Trigger extraction at speech end
+
+### Phase 6: Flow Sheet UI ✅ COMPLETE
+- [x] Create FlowSheet component
+- [x] Implement FlowColumn component
+- [x] Create ArgumentCard component
+- [x] Display at end of debate (not real-time)
+
+**Files Created:**
+- `client/src/components/FlowSheet.tsx` - 5-column flow display with ArgumentCard
+
+### Phase 7: Ballot Generation ✅ COMPLETE
+- [x] Implement BallotGeneratorService
+- [x] Create ballot display component
+- [x] Generate ballot at debate end
+- [x] Combined FlowSheet + Ballot display
+- [x] Expanded language support to 85 languages
+- [x] Searchable language selector UI
+
+**Files Created:**
+- `server/src/flow/ballotGenerator.ts` - Gemini-powered ballot with RFD
+- `client/src/components/BallotDisplay.tsx` - Full-screen ballot + flow display
+- `client/src/components/LanguageSelector.tsx` - Searchable dropdown for 85 languages
+
+**Files Modified:**
+- `server/src/index.ts` - Initialize extractor and ballot services
+- `server/src/websocket/handlers.ts` - Trigger ballot at debate end, broadcast to clients, fixed SpeechRole typing
+- `client/src/hooks/useWebSocket.ts` - Handle ballot:ready message
+- `client/src/pages/Room.tsx` - Show BallotDisplay when debate ends, use LanguageSelector, import LANGUAGES
+- `shared/src/types.ts` - Expanded LanguageCode type and LANGUAGES array to 85 languages
+- `server/src/stt/geminiStt.ts` - Updated getLanguageName() for all languages
+- `server/src/translation/geminiTranslation.ts` - Updated getLanguageName() for all languages
 
 ### Phase 8: Latency + Polish ⬜
 - [ ] Implement latency tracking
@@ -1344,7 +1402,7 @@ PORT=3001
 Milestone 2 is complete when:
 
 1. ✅ Speaker's audio is captured and streamed to server
-2. ✅ Google STT produces real-time transcripts (interim + final)
+2. ✅ Gemini STT produces transcripts (5-second buffered, final only)
 3. ✅ Gemini translates with debate context
 4. ✅ Dual transcript shows original + translation
 5. ✅ Arguments are extracted with CWI structure
@@ -1353,6 +1411,7 @@ Milestone 2 is complete when:
 8. ✅ Ballot generates at debate end
 9. ✅ Latency under 1.5s for translation pipeline
 10. ✅ Works for English ↔ Korean demo pair
+11. ✅ Supports 85 languages via searchable dropdown selector
 
 ---
 

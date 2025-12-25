@@ -12,6 +12,7 @@ import type {
   LanguageCode,
   STTFinalPayload,
   TranslationCompletePayload,
+  BallotReadyPayload,
 } from '@shared/types';
 
 const WS_URL = 'ws://localhost:3001/ws';
@@ -52,10 +53,11 @@ interface UseWebSocketOptions {
   onSignal?: (message: SignalMessage) => void;
   onTranscript?: (transcript: TranscriptMessage) => void;
   onTranslation?: (translation: TranslationMessage) => void;
+  onBallot?: (payload: BallotReadyPayload) => void;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
-  const { roomCode, displayName, onConnect, onDisconnect, onSignal, onTranscript, onTranslation } = options;
+  const { roomCode, displayName, onConnect, onDisconnect, onSignal, onTranscript, onTranslation, onBallot } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -166,13 +168,20 @@ export function useWebSocket(options: UseWebSocketOptions) {
           break;
         }
 
+        case 'ballot:ready': {
+          const payload = message.payload as BallotReadyPayload;
+          console.log('[WS] Ballot ready - Winner:', payload.ballot.winner);
+          onBallot?.(payload);
+          break;
+        }
+
         default:
           console.log('[WS] Unhandled message type:', message.type);
       }
     } catch (error) {
       console.error('[WS] Failed to parse message:', error);
     }
-  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation]);
+  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot]);
 
   // Send a message
   const send = useCallback((type: WSMessageType, payload: unknown) => {
