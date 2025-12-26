@@ -24,6 +24,7 @@ import {
   getBotState,
   unregisterBot,
 } from '../bot/botParticipant.js';
+import { botManager } from '../bot/botManager.js';
 import { roomManager } from '../rooms/manager.js';
 import { debateManager } from '../timer/debateController.js';
 import { audioSessionManager } from '../audio/sessionManager.js';
@@ -43,6 +44,35 @@ let serverRef: SignalingServer | null = null;
 // Initialize debate callbacks and STT callbacks
 export function initializeDebateCallbacks(server: SignalingServer): void {
   serverRef = server;
+
+  // Initialize bot manager with callbacks (Milestone 5)
+  botManager.initialize({
+    broadcastToRoom: (roomId: string, message: unknown) => {
+      server.broadcastToRoomAll(roomId, message as WSMessage);
+    },
+    onSpeechStart: (roomId: string, speech: SpeechRole, botId: string) => {
+      const room = roomManager.getRoom(roomId);
+      if (room) {
+        room.currentSpeech = speech;
+        room.currentSpeaker = botId;
+        server.broadcastToRoomAll(roomId, {
+          type: 'speech:start',
+          payload: { speech, speakerId: botId },
+        });
+        server.broadcastToRoomAll(roomId, {
+          type: 'room:state',
+          payload: { room: roomManager.serializeRoom(room) },
+        });
+      }
+    },
+    onSpeechEnd: (roomId: string, speech: SpeechRole) => {
+      // This is handled by debateManager's onSpeechEnd callback
+    },
+    onTTSReady: (roomId: string) => {
+      // Start the bot's speech timer when TTS is ready to play
+      debateManager.startBotSpeechTimer(roomId);
+    },
+  });
 
   // Set up STT transcription callback
   geminiSttService.setTranscriptionCallback(async (participantId, result) => {
@@ -191,6 +221,7 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
           payload: { room: roomManager.serializeRoom(room) },
         });
       }
+
     },
     onSpeechEnd: async (roomId: string, speech: SpeechRole, nextSpeech: SpeechRole | null) => {
       const room = roomManager.getRoom(roomId);
@@ -200,6 +231,15 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
       if (room?.currentSpeaker) {
         ttsSessionManager.clearQueue(room.currentSpeaker);
         console.log(`[TTS] Cleared queue for ${room.currentSpeaker} on speech end`);
+      }
+
+      // Milestone 5: Force stop bot speech when timer ends
+      if (room?.mode === 'practice') {
+        const speaker = room.participants.get(room.currentSpeaker || '');
+        if (speaker?.isBot) {
+          console.log(`[Bot] Timer ended - stopping bot speech for ${speech}`);
+          botManager.stopBotSpeech(roomId);
+        }
       }
 
       server.broadcastToRoomAll(roomId, {
@@ -213,17 +253,31 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
         if (room) {
           const transcript = flowStateManager.getSpeechTranscript(roomId, speech);
           const priorArguments = flowStateManager.getArguments(roomId);
-          
+
           const extractedArgs = await argumentExtractor.extractArguments(transcript, {
             resolution: room.resolution,
             speech,
             priorArguments,
           });
-          
+
           if (extractedArgs.length > 0) {
             flowStateManager.addArguments(roomId, extractedArgs);
             console.log(`[Flow] Extracted ${extractedArgs.length} arguments from ${speech}`);
           }
+        }
+      }
+
+      // Milestone 5: Practice mode - Auto-trigger bot's next speech
+      if (room && room.mode === 'practice' && nextSpeech) {
+        const nextSpeakerSide = SPEECH_SIDES[nextSpeech];
+        const nextSpeaker = Array.from(room.participants.values()).find(p => p.side === nextSpeakerSide);
+
+        if (nextSpeaker?.isBot) {
+          console.log(`[Bot] Auto-triggering bot speech for ${nextSpeech}`);
+          // Small delay to allow UI to update before starting next speech
+          setTimeout(() => {
+            debateManager.startNextSpeech(roomId);
+          }, 1000);
         }
       }
     },
@@ -343,6 +397,75 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
         },
       });
       console.log(`[Timeout] Debate ended in room ${roomId}: ${reason}`);
+    },
+    // Bot speech callbacks (Milestone 5)
+    onBotPrepStart: (roomId: string, speech: SpeechRole, botId: string) => {
+      // Notify clients that bot is preparing (listening phase ended)
+      const room = roomManager.getRoom(roomId);
+      if (room) {
+        room.currentSpeech = speech;
+        room.currentSpeaker = botId;
+        server.broadcastToRoomAll(roomId, {
+          type: 'bot:prep:start',
+          payload: {
+            speech,
+            botId,
+          },
+        });
+        // Also send updated room state
+        server.broadcastToRoomAll(roomId, {
+          type: 'room:state',
+          payload: { room: roomManager.serializeRoom(room) },
+        });
+      }
+      console.log(`[Bot] Prep phase started for ${speech}`);
+    },
+    onBotPrepEnd: (roomId: string, speech: SpeechRole) => {
+      // Notify clients that bot prep is done, speech timer starting
+      server.broadcastToRoomAll(roomId, {
+        type: 'bot:prep:end',
+        payload: {
+          speech,
+        },
+      });
+      console.log(`[Bot] Prep phase ended for ${speech}, timer starting`);
+    },
+    onBotSpeechChunk: (roomId: string, chunk: Buffer, index: number) => {
+      const room = roomManager.getRoom(roomId);
+      if (!room) return;
+
+      const botId = roomManager.getBotParticipantId(roomId);
+      if (!botId) return;
+
+      // Broadcast TTS audio chunk to all participants
+      server.broadcastToRoomAll(roomId, {
+        type: 'tts:audio_chunk',
+        payload: {
+          speakerId: botId,
+          speechId: room.currentSpeech || 'bot',
+          chunkIndex: index,
+          audioData: chunk.toString('base64'),
+          isFinal: false,
+          timestamp: Date.now(),
+        },
+      });
+    },
+    onBotSpeechComplete: (roomId: string, speech: SpeechRole) => {
+      const room = roomManager.getRoom(roomId);
+      if (!room) return;
+
+      const botId = roomManager.getBotParticipantId(roomId);
+      if (!botId) return;
+
+      // Notify clients that bot TTS is complete
+      server.broadcastToRoomAll(roomId, {
+        type: 'tts:end',
+        payload: {
+          speakerId: botId,
+          speechId: speech,
+        },
+      });
+      console.log(`[Bot] TTS complete for ${speech}`);
     },
   });
 }

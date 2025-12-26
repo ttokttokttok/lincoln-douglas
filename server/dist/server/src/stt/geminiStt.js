@@ -151,11 +151,57 @@ class GeminiSTTService {
             console.log(`[GeminiSTT] Audio too short (${pcmBuffer.length} bytes), skipping`);
             return;
         }
+        // Debug: Calculate audio level (RMS) to verify mic is capturing audio
+        const samples = new Int16Array(pcmBuffer.buffer, pcmBuffer.byteOffset, pcmBuffer.length / 2);
+        let sumSquares = 0;
+        let maxSample = 0;
+        for (let i = 0; i < samples.length; i++) {
+            sumSquares += samples[i] * samples[i];
+            maxSample = Math.max(maxSample, Math.abs(samples[i]));
+        }
+        const rms = Math.sqrt(sumSquares / samples.length);
+        const rmsDb = 20 * Math.log10(rms / 32768);
+        console.log(`[GeminiSTT] Audio level: RMS=${Math.round(rms)} (${rmsDb.toFixed(1)}dB), Peak=${maxSample}, Length=${pcmBuffer.length}bytes`);
+        // Skip if audio is essentially silent (RMS < 100, about -50dB)
+        if (rms < 100) {
+            console.log(`[GeminiSTT] Audio too quiet (RMS=${Math.round(rms)}), likely silence - skipping`);
+            return;
+        }
         // Transcribe
         try {
             const result = await this.transcribeAudio(pcmBuffer, session.language);
             if (result && result.text.trim()) {
-                console.log(`[GeminiSTT] Transcribed: "${result.text.substring(0, 50)}..."`);
+                const text = result.text.trim();
+                // Filter out Gemini meta-responses (not actual transcriptions)
+                const metaPatterns = [
+                    /^\[silence\]$/i,
+                    /^\[silent\]$/i,
+                    /^no audio/i,
+                    /^the audio/i,
+                    /^this audio/i,
+                    /^i cannot/i,
+                    /^i can't/i,
+                    /^there is no/i,
+                    /^audio not detected/i,
+                    /^no speech/i,
+                ];
+                const isMetaResponse = metaPatterns.some(pattern => pattern.test(text));
+                if (isMetaResponse) {
+                    console.log(`[GeminiSTT] Skipping meta-response: "${text}"`);
+                    return;
+                }
+                // Filter out responses that are only punctuation/dots (Gemini returns "." for unclear audio)
+                const textWithoutPunctuation = text.replace(/[\s.,!?;:\-…·•]+/g, '');
+                if (textWithoutPunctuation.length === 0) {
+                    console.log(`[GeminiSTT] Skipping punctuation-only response: "${text}"`);
+                    return;
+                }
+                // Filter out very short responses that are likely noise (single letters, etc.)
+                if (textWithoutPunctuation.length <= 2) {
+                    console.log(`[GeminiSTT] Skipping too-short response: "${text}"`);
+                    return;
+                }
+                console.log(`[GeminiSTT] Transcribed: "${text.substring(0, 50)}..."`);
                 this.onTranscription?.(participantId, result);
             }
         }

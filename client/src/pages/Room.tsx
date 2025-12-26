@@ -15,7 +15,7 @@ import { LanguageSelector } from '../components/LanguageSelector';
 import { VoiceSelector } from '../components/VoiceSelector';
 import { TTSSettings } from '../components/TTSSettings';
 import { LANGUAGES, type LanguageCode, type Side, type SpeechRole, type BallotReadyPayload, type TimeoutWarningPayload, type TimeoutEndPayload, type VoiceConfig } from '@shared/types';
-import { Bot, SkipForward, Loader } from 'lucide-react';
+import { Bot, Loader, Volume2 } from 'lucide-react';
 
 export function Room() {
   const { roomId } = useParams<{ roomId: string }>();
@@ -45,9 +45,11 @@ export function Room() {
   const [voicesLoading, setVoicesLoading] = useState(false);
 
   // Bot state (Milestone 5)
+  const [isBotPrepping, setIsBotPrepping] = useState(false);  // Bot is preparing (after user's speech ends)
   const [isBotGenerating, setIsBotGenerating] = useState(false);
-  // botSpeechText can be used for transcript display in future
-  const [, setBotSpeechText] = useState<string | null>(null);
+  // Progressive bot transcript (Milestone 5)
+  const [botTranscriptSentences, setBotTranscriptSentences] = useState<string[]>([]);
+  const botTranscriptRef = useRef<HTMLDivElement>(null);
 
   // Track if we're the initiator (first to join with stream ready)
   const isInitiatorRef = useRef(false);
@@ -66,6 +68,7 @@ export function Room() {
     connectionError,
     room,
     myParticipantId,
+    botConfig,
   } = useRoomStore();
 
   // Get local media stream
@@ -311,6 +314,9 @@ export function Room() {
     setTTSPlaybackVolume(ttsVolume);
   }, [ttsVolume, setTTSPlaybackVolume]);
 
+  // Practice mode helper (Milestone 5)
+  const isPracticeMode = room?.mode === 'practice';
+
   // WebSocket connection
   const {
     setReady,
@@ -331,11 +337,10 @@ export function Room() {
     // Voice selection (Milestone 3)
     requestVoiceList,
     selectVoice,
-    // Bot actions (Milestone 5)
-    skipBotSpeech,
   } = useWebSocket({
     roomCode: roomId || '',
     displayName,
+    botConfig: roomId === 'practice' ? botConfig : null,  // Milestone 5: Pass bot config for practice mode
     onSignal: handleSignal,
     onTranscript: handleTranscript,
     onTranslation: handleTranslation,
@@ -349,15 +354,34 @@ export function Room() {
     onTimeoutWarning: handleTimeoutWarning,
     onTimeoutEnd: handleTimeoutEnd,
     // Bot callbacks (Milestone 5)
+    onBotPrepStart: (speechRole, _botId) => {
+      console.log('[Room] Bot prep started for:', speechRole);
+      setIsBotPrepping(true);
+      setBotTranscriptSentences([]);  // Clear transcript when prep starts
+    },
+    onBotPrepEnd: (speechRole) => {
+      console.log('[Room] Bot prep ended, timer starting for:', speechRole);
+      setIsBotPrepping(false);
+    },
     onBotGenerating: (speechRole, _character) => {
       console.log('[Room] Bot generating speech:', speechRole);
       setIsBotGenerating(true);
-      setBotSpeechText(null);
     },
-    onBotSpeechReady: (speechRole, speechText) => {
+    onBotSpeechReady: (speechRole) => {
       console.log('[Room] Bot speech ready:', speechRole);
       setIsBotGenerating(false);
-      setBotSpeechText(speechText);
+    },
+    onBotTranscriptChunk: (sentence, index, total, _isFinal) => {
+      console.log(`[Room] Bot transcript chunk ${index + 1}/${total}`);
+      setBotTranscriptSentences(prev => {
+        const newSentences = [...prev];
+        newSentences[index] = sentence;
+        return newSentences;
+      });
+      // Auto-scroll to latest sentence
+      if (botTranscriptRef.current) {
+        botTranscriptRef.current.scrollTop = botTranscriptRef.current.scrollHeight;
+      }
     },
   });
 
@@ -473,13 +497,6 @@ export function Room() {
   const isOpponentBot = opponent?.isBot === true;
   const isBotSpeaking = isOpponentBot && room?.currentSpeaker === opponent?.id && room?.status === 'in_progress';
 
-  // Handle skip bot speech
-  const handleSkipBotSpeech = useCallback(() => {
-    if (room?.currentSpeech) {
-      skipBotSpeech(room.currentSpeech);
-    }
-  }, [room?.currentSpeech, skipBotSpeech]);
-
   // Connection status display
   const getStatusDisplay = () => {
     if (isConnecting) return { text: 'Connecting...', color: 'text-yellow-400' };
@@ -584,9 +601,20 @@ export function Room() {
         <div className="card mb-4">
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-xl font-bold">Debate Room</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-xl font-bold">
+                  {isPracticeMode ? 'Practice Mode' : 'Debate Room'}
+                </h1>
+                {isPracticeMode && (
+                  <span className="px-2 py-0.5 bg-purple-600 text-xs rounded-full">vs AI</span>
+                )}
+              </div>
               <p className="text-gray-400 text-sm">
-                Room Code: <span className="font-mono text-white">{roomId}</span>
+                {isPracticeMode ? (
+                  <>Bot: <span className="text-purple-400">{opponent?.displayName || 'AI'}</span></>
+                ) : (
+                  <>Room Code: <span className="font-mono text-white">{roomId}</span></>
+                )}
               </p>
             </div>
             <div className="text-right">
@@ -607,12 +635,18 @@ export function Room() {
         {/* Start Debate Button - Only show when room is ready */}
         {room?.status === 'ready' && (
           <div className="card mb-4 text-center">
-            <p className="text-green-400 mb-3">Both debaters are ready!</p>
+            <p className={isPracticeMode ? 'text-purple-400 mb-3' : 'text-green-400 mb-3'}>
+              {isPracticeMode ? 'Ready to practice!' : 'Both debaters are ready!'}
+            </p>
             <button
               onClick={startDebate}
-              className="px-8 py-3 bg-green-600 hover:bg-green-700 rounded-lg font-bold text-lg transition-colors"
+              className={`px-8 py-3 rounded-lg font-bold text-lg transition-colors ${
+                isPracticeMode
+                  ? 'bg-purple-600 hover:bg-purple-700'
+                  : 'bg-green-600 hover:bg-green-700'
+              }`}
             >
-              Start Debate
+              {isPracticeMode ? 'Start Practice Debate' : 'Start Debate'}
             </button>
           </div>
         )}
@@ -716,27 +750,63 @@ export function Room() {
           {/* Remote Video / Bot Panel */}
           {isOpponentBot ? (
             // Bot opponent panel (Milestone 5)
-            <div className="relative bg-gray-900 rounded-lg aspect-video flex items-center justify-center">
-              <div className="text-center">
-                <div className="p-4 bg-purple-500/20 rounded-full inline-block mb-3">
-                  <Bot className="w-12 h-12 text-purple-400" />
+            <div className="relative bg-gray-900 rounded-lg flex flex-col" style={{ minHeight: '300px' }}>
+              {/* Bot header */}
+              <div className="flex items-center gap-3 p-3 border-b border-gray-700">
+                <div className="p-2 bg-purple-500/20 rounded-full">
+                  <Bot className="w-6 h-6 text-purple-400" />
                 </div>
-                <p className="text-white font-semibold">{opponent?.displayName}</p>
-                <p className="text-sm text-gray-400">AI Opponent</p>
-                {isBotGenerating && (
-                  <div className="mt-3 flex items-center justify-center gap-2 text-purple-400">
+                <div>
+                  <p className="text-white font-semibold">{opponent?.displayName}</p>
+                  <p className="text-xs text-gray-400">AI Opponent</p>
+                </div>
+                {isBotPrepping && (
+                  <div className="ml-auto flex items-center gap-2 text-yellow-400">
+                    <Loader className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Preparing...</span>
+                  </div>
+                )}
+                {isBotGenerating && !isBotPrepping && (
+                  <div className="ml-auto flex items-center gap-2 text-purple-400">
                     <Loader className="w-4 h-4 animate-spin" />
                     <span className="text-sm">Thinking...</span>
                   </div>
                 )}
-                {isBotSpeaking && !isBotGenerating && (
-                  <button
-                    onClick={handleSkipBotSpeech}
-                    className="mt-3 flex items-center gap-2 px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg mx-auto transition-colors"
-                  >
-                    <SkipForward className="w-4 h-4" />
-                    <span className="text-sm">Skip Speech</span>
-                  </button>
+                {isBotSpeaking && !isBotGenerating && !isBotPrepping && (
+                  <div className="ml-auto flex items-center gap-2 text-green-400">
+                    <Volume2 className="w-4 h-4" />
+                    <span className="text-sm">Speaking...</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Bot transcript - progressive display */}
+              <div
+                ref={botTranscriptRef}
+                className="flex-1 overflow-y-auto p-3 space-y-2 text-sm"
+                style={{ maxHeight: '250px' }}
+              >
+                {botTranscriptSentences.length > 0 ? (
+                  botTranscriptSentences.map((sentence, idx) => (
+                    <p
+                      key={idx}
+                      className={`text-gray-300 ${idx === botTranscriptSentences.length - 1 ? 'text-white font-medium' : ''}`}
+                    >
+                      {sentence}
+                    </p>
+                  ))
+                ) : isBotPrepping ? (
+                  <div className="flex flex-col items-center justify-center h-full text-yellow-400/70">
+                    <Loader className="w-8 h-8 animate-spin mb-3" />
+                    <p className="italic">Bot is preparing response...</p>
+                    <p className="text-xs text-gray-500 mt-1">(Timer will start when ready)</p>
+                  </div>
+                ) : isBotSpeaking ? (
+                  <p className="text-gray-500 italic">Bot is speaking...</p>
+                ) : (
+                  <p className="text-gray-500 italic text-center mt-8">
+                    Bot transcript will appear here when speaking
+                  </p>
                 )}
               </div>
             </div>
@@ -778,160 +848,209 @@ export function Room() {
 
         {/* Participants Setup - Hide during debate */}
         {room?.status !== 'in_progress' && room?.status !== 'completed' && (
-        <div className="grid grid-cols-2 gap-4 mb-4">
-          {/* Me */}
-          <div className={`card ${myParticipant?.isReady ? 'ring-2 ring-green-500' : ''}`}>
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold">{myParticipant?.displayName || displayName} (You)</h3>
-              {myParticipant?.isReady && (
-                <span className="text-green-400 text-sm">Ready</span>
-              )}
-            </div>
-
-            {/* Side Selection */}
-            <div className="mb-4">
-              <p className="text-sm text-gray-400 mb-2">Select your side:</p>
-              <div className="flex gap-2">
-                <button
-                  onClick={() => handleSideSelect('AFF')}
-                  disabled={isSideTaken('AFF')}
-                  className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
-                    myParticipant?.side === 'AFF'
-                      ? 'bg-blue-600 text-white'
-                      : isSideTaken('AFF')
-                      ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                  }`}
-                >
-                  AFF
-                </button>
-                <button
-                  onClick={() => handleSideSelect('NEG')}
-                  disabled={isSideTaken('NEG')}
-                  className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
-                    myParticipant?.side === 'NEG'
-                      ? 'bg-red-600 text-white'
-                      : isSideTaken('NEG')
-                      ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                      : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
-                  }`}
-                >
-                  NEG
-                </button>
+          isPracticeMode ? (
+            // Practice Mode: Simplified setup panel
+            <div className="card mb-4">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-semibold text-purple-400">Match Setup</h3>
+                {myParticipant?.isReady && opponent?.isReady && (
+                  <span className="text-green-400 text-sm">Ready to start!</span>
+                )}
               </div>
+
+              <div className="grid grid-cols-2 gap-4 mb-4">
+                {/* You */}
+                <div className="p-3 bg-gray-800 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-1">You</p>
+                  <p className="font-medium">{myParticipant?.displayName}</p>
+                  <p className={`text-sm ${myParticipant?.side === 'AFF' ? 'text-blue-400' : 'text-red-400'}`}>
+                    {myParticipant?.side === 'AFF' ? 'Affirmative' : 'Negative'}
+                  </p>
+                </div>
+
+                {/* Bot Opponent */}
+                <div className="p-3 bg-gray-800 rounded-lg">
+                  <p className="text-sm text-gray-400 mb-1">AI Opponent</p>
+                  <div className="flex items-center gap-2">
+                    <Bot className="w-4 h-4 text-purple-400" />
+                    <p className="font-medium">{opponent?.displayName}</p>
+                  </div>
+                  <p className={`text-sm ${opponent?.side === 'AFF' ? 'text-blue-400' : 'text-red-400'}`}>
+                    {opponent?.side === 'AFF' ? 'Affirmative' : 'Negative'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Ready Button for Practice Mode */}
+              <button
+                onClick={handleReadyToggle}
+                className={`w-full py-2 rounded-lg font-medium transition-all ${
+                  myParticipant?.isReady
+                    ? 'bg-purple-600 hover:bg-purple-700 text-white'
+                    : 'bg-gray-700 hover:bg-gray-600 text-white'
+                }`}
+              >
+                {myParticipant?.isReady ? 'Ready!' : 'Click when ready'}
+              </button>
             </div>
-
-            {/* Language Selection */}
-            <div className="grid grid-cols-2 gap-3">
-              <LanguageSelector
-                label="I speak:"
-                value={myParticipant?.speakingLanguage || 'en'}
-                onChange={(code) => handleLanguageChange('speaking', code)}
-              />
-              <LanguageSelector
-                label="I want to hear:"
-                value={myParticipant?.listeningLanguage || 'en'}
-                onChange={(code) => handleLanguageChange('listening', code)}
-              />
-            </div>
-
-            {/* Voice Selection */}
-            <div className="mt-4">
-              <h4 className="text-sm font-medium text-gray-300 mb-1">
-                Your debate voice
-              </h4>
-              <p className="text-xs text-gray-500 mb-3">
-                How your opponent hears you when translated
-              </p>
-              <VoiceSelector
-                voices={availableVoices}
-                selectedVoiceId={selectedVoiceId}
-                onSelect={handleVoiceSelect}
-                loading={voicesLoading}
-                disabled={myParticipant?.isReady}
-              />
-            </div>
-
-            {/* Hear Opponent Settings (TTS) */}
-            <div className="mt-4">
-              <TTSSettings
-                enabled={ttsEnabled}
-                onEnabledChange={setTtsEnabled}
-                volume={ttsVolume}
-                onVolumeChange={setTtsVolume}
-              />
-            </div>
-
-            {/* Ready Button */}
-            <button
-              onClick={handleReadyToggle}
-              disabled={!myParticipant?.side}
-              className={`w-full mt-4 py-2 rounded-lg font-medium transition-all ${
-                myParticipant?.isReady
-                  ? 'bg-green-600 hover:bg-green-700 text-white'
-                  : !myParticipant?.side
-                  ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                  : 'bg-gray-700 hover:bg-gray-600 text-white'
-              }`}
-            >
-              {myParticipant?.isReady ? 'Ready!' : 'Click when ready'}
-            </button>
-          </div>
-
-          {/* Opponent */}
-          <div className={`card ${opponent?.isReady ? 'ring-2 ring-green-500' : ''}`}>
-            {opponent ? (
-              <>
+          ) : (
+            // PvP Mode: Full setup panel
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              {/* Me */}
+              <div className={`card ${myParticipant?.isReady ? 'ring-2 ring-green-500' : ''}`}>
                 <div className="flex items-center justify-between mb-3">
-                  <h3 className="font-semibold">{opponent.displayName}</h3>
-                  {opponent.isReady && (
+                  <h3 className="font-semibold">{myParticipant?.displayName || displayName} (You)</h3>
+                  {myParticipant?.isReady && (
                     <span className="text-green-400 text-sm">Ready</span>
                   )}
                 </div>
 
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Side:</span>
-                    <span className={opponent.side === 'AFF' ? 'text-blue-400' : opponent.side === 'NEG' ? 'text-red-400' : 'text-gray-500'}>
-                      {opponent.side || 'Not selected'}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Speaks:</span>
-                    <span>{LANGUAGES.find(l => l.code === opponent.speakingLanguage)?.flag} {opponent.speakingLanguage.toUpperCase()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Listening:</span>
-                    <span>{LANGUAGES.find(l => l.code === opponent.listeningLanguage)?.flag} {opponent.listeningLanguage.toUpperCase()}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-400">Video:</span>
-                    <span className={isPeerConnected ? 'text-green-400' : 'text-yellow-400'}>
-                      {isPeerConnected ? 'Connected' : isPeerConnecting ? 'Connecting...' : 'Waiting'}
-                    </span>
+                {/* Side Selection */}
+                <div className="mb-4">
+                  <p className="text-sm text-gray-400 mb-2">Select your side:</p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleSideSelect('AFF')}
+                      disabled={isSideTaken('AFF')}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
+                        myParticipant?.side === 'AFF'
+                          ? 'bg-blue-600 text-white'
+                          : isSideTaken('AFF')
+                          ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                          : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      }`}
+                    >
+                      AFF
+                    </button>
+                    <button
+                      onClick={() => handleSideSelect('NEG')}
+                      disabled={isSideTaken('NEG')}
+                      className={`flex-1 py-2 px-4 rounded-lg font-medium transition-all ${
+                        myParticipant?.side === 'NEG'
+                          ? 'bg-red-600 text-white'
+                          : isSideTaken('NEG')
+                          ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                          : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                      }`}
+                    >
+                      NEG
+                    </button>
                   </div>
                 </div>
-              </>
-            ) : (
-              <div className="text-center text-gray-500 py-8">
-                <div className="text-4xl mb-2">👤</div>
-                <p>Waiting for opponent...</p>
-                <p className="text-sm mt-2">Share the room code: <span className="font-mono text-white">{roomId}</span></p>
+
+                {/* Language Selection */}
+                <div className="grid grid-cols-2 gap-3">
+                  <LanguageSelector
+                    label="I speak:"
+                    value={myParticipant?.speakingLanguage || 'en'}
+                    onChange={(code) => handleLanguageChange('speaking', code)}
+                  />
+                  <LanguageSelector
+                    label="I want to hear:"
+                    value={myParticipant?.listeningLanguage || 'en'}
+                    onChange={(code) => handleLanguageChange('listening', code)}
+                  />
+                </div>
+
+                {/* Voice Selection */}
+                <div className="mt-4">
+                  <h4 className="text-sm font-medium text-gray-300 mb-1">
+                    Your debate voice
+                  </h4>
+                  <p className="text-xs text-gray-500 mb-3">
+                    How your opponent hears you when translated
+                  </p>
+                  <VoiceSelector
+                    voices={availableVoices}
+                    selectedVoiceId={selectedVoiceId}
+                    onSelect={handleVoiceSelect}
+                    loading={voicesLoading}
+                    disabled={myParticipant?.isReady}
+                  />
+                </div>
+
+                {/* Hear Opponent Settings (TTS) */}
+                <div className="mt-4">
+                  <TTSSettings
+                    enabled={ttsEnabled}
+                    onEnabledChange={setTtsEnabled}
+                    volume={ttsVolume}
+                    onVolumeChange={setTtsVolume}
+                  />
+                </div>
+
+                {/* Ready Button */}
+                <button
+                  onClick={handleReadyToggle}
+                  disabled={!myParticipant?.side}
+                  className={`w-full mt-4 py-2 rounded-lg font-medium transition-all ${
+                    myParticipant?.isReady
+                      ? 'bg-green-600 hover:bg-green-700 text-white'
+                      : !myParticipant?.side
+                      ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                      : 'bg-gray-700 hover:bg-gray-600 text-white'
+                  }`}
+                >
+                  {myParticipant?.isReady ? 'Ready!' : 'Click when ready'}
+                </button>
               </div>
-            )}
-          </div>
-        </div>
+
+              {/* Opponent */}
+              <div className={`card ${opponent?.isReady ? 'ring-2 ring-green-500' : ''}`}>
+                {opponent ? (
+                  <>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-semibold">{opponent.displayName}</h3>
+                      {opponent.isReady && (
+                        <span className="text-green-400 text-sm">Ready</span>
+                      )}
+                    </div>
+
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Side:</span>
+                        <span className={opponent.side === 'AFF' ? 'text-blue-400' : opponent.side === 'NEG' ? 'text-red-400' : 'text-gray-500'}>
+                          {opponent.side || 'Not selected'}
+                        </span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Speaks:</span>
+                        <span>{LANGUAGES.find(l => l.code === opponent.speakingLanguage)?.flag} {opponent.speakingLanguage.toUpperCase()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Listening:</span>
+                        <span>{LANGUAGES.find(l => l.code === opponent.listeningLanguage)?.flag} {opponent.listeningLanguage.toUpperCase()}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-gray-400">Video:</span>
+                        <span className={isPeerConnected ? 'text-green-400' : 'text-yellow-400'}>
+                          {isPeerConnected ? 'Connected' : isPeerConnecting ? 'Connecting...' : 'Waiting'}
+                        </span>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="text-center text-gray-500 py-8">
+                    <div className="text-4xl mb-2">👤</div>
+                    <p>Waiting for opponent...</p>
+                    <p className="text-sm mt-2">Share the room code: <span className="font-mono text-white">{roomId}</span></p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )
         )}
 
         {/* Debug info */}
         {import.meta.env.DEV && (
           <div className="card mt-4 text-xs text-gray-500 space-y-1">
             <p>WS: connected={String(isConnected)}, myId={myParticipantId || 'none'}</p>
-            <p>Room: participants={room?.participants.length || 0}, status={room?.status || 'none'}</p>
+            <p>Room: participants={room?.participants.length || 0}, status={room?.status || 'none'}, mode={room?.mode || 'pvp'}</p>
             <p>Video: local={localStream ? 'yes' : 'no'}, remote={remoteStream ? 'yes' : 'no'}</p>
             <p>Peer: connected={String(isPeerConnected)}, connecting={String(isPeerConnecting)}</p>
             <p>Audio: initialized={String(isAudioInitialized)}, streaming={String(isAudioStreaming)}, speaking={String(isCurrentlySpeaking)}</p>
             <p>TTS: enabled={String(ttsEnabled)}, playing={String(isTTSPlaying)}, volume={ttsVolume}</p>
+            {isPracticeMode && <p className="text-purple-400">Practice: bot={opponent?.displayName}, botGenerating={String(isBotGenerating)}</p>}
             {audioError && <p className="text-red-400">Audio Error: {audioError.message}</p>}
           </div>
         )}

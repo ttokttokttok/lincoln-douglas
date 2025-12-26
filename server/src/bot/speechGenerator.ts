@@ -125,12 +125,31 @@ class BotSpeechGenerator {
       }
 
       const generationTimeMs = Date.now() - startTime;
-      const wordCount = text.split(/\s+/).length;
+      let cleanedText = cleanSpeechText(text);
 
+      // Limit to ~2500 characters to save ElevenLabs credits (costs ~1250 credits)
+      const MAX_CHARS = 2500;
+      if (cleanedText.length > MAX_CHARS) {
+        // Truncate at sentence boundary
+        const truncated = cleanedText.substring(0, MAX_CHARS);
+        const lastSentenceEnd = Math.max(
+          truncated.lastIndexOf('.'),
+          truncated.lastIndexOf('!'),
+          truncated.lastIndexOf('?')
+        );
+        if (lastSentenceEnd > MAX_CHARS * 0.7) {
+          cleanedText = truncated.substring(0, lastSentenceEnd + 1);
+        } else {
+          cleanedText = truncated + '...';
+        }
+        console.log(`[BotSpeech] Truncated from ${text.length} to ${cleanedText.length} chars`);
+      }
+
+      const wordCount = cleanedText.split(/\s+/).length;
       console.log(`[BotSpeech] Generated ${wordCount} words in ${generationTimeMs}ms`);
 
       return {
-        text: cleanSpeechText(text),
+        text: cleanedText,
         generationTimeMs,
         wordCount,
       };

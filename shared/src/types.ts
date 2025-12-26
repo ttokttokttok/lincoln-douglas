@@ -144,9 +144,12 @@ export type WSMessageType =
   | 'debate:timeout_end'      // Server -> Client: Debate ended due to timeout
   // Bot practice mode (Milestone 5)
   | 'bot:room:create'         // Client -> Server: Create practice room with bot
+  | 'bot:prep:start'          // Server -> Client: Bot is preparing (listening ended, generating)
+  | 'bot:prep:end'            // Server -> Client: Bot prep ended, speech timer starting
   | 'bot:speech:generating'   // Server -> Client: Bot is generating speech
   | 'bot:speech:ready'        // Server -> Client: Bot speech ready to play
-  | 'bot:speech:skip';        // Client -> Server: Skip current bot speech
+  | 'bot:speech:skip'         // Client -> Server: Skip current bot speech
+  | 'bot:transcript:chunk';   // Server -> Client: Progressive transcript chunk
 
 // Base WebSocket message
 export interface WSMessage<T = unknown> {

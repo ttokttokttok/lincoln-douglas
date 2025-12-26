@@ -85,9 +85,18 @@ export interface TTSErrorMessage {
   error: string;
 }
 
+// Bot configuration for practice mode
+export interface BotConfig {
+  character: BotCharacter;
+  userSide: Side;
+  resolution: string;
+  language: LanguageCode;
+}
+
 interface UseWebSocketOptions {
   roomCode: string;
   displayName: string;
+  botConfig?: BotConfig | null;  // Milestone 5: Bot config for practice mode
   onConnect?: () => void;
   onDisconnect?: () => void;
   onSignal?: (message: SignalMessage) => void;
@@ -104,16 +113,19 @@ interface UseWebSocketOptions {
   onTimeoutWarning?: (payload: TimeoutWarningPayload) => void;
   onTimeoutEnd?: (payload: TimeoutEndPayload) => void;
   // Bot callbacks (Milestone 5)
+  onBotPrepStart?: (speechRole: SpeechRole, botId: string) => void;  // Bot enters prep phase
+  onBotPrepEnd?: (speechRole: SpeechRole) => void;  // Bot prep done, timer starting
   onBotGenerating?: (speechRole: SpeechRole, character: BotCharacter) => void;
   onBotSpeechReady?: (speechRole: SpeechRole, speechText: string) => void;
+  onBotTranscriptChunk?: (sentence: string, index: number, total: number, isFinal: boolean) => void;
 }
 
 export function useWebSocket(options: UseWebSocketOptions) {
   const {
-    roomCode, displayName, onConnect, onDisconnect, onSignal, onTranscript, onTranslation, onBallot,
+    roomCode, displayName, botConfig, onConnect, onDisconnect, onSignal, onTranscript, onTranslation, onBallot,
     onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList,
     onTimeoutWarning, onTimeoutEnd,
-    onBotGenerating, onBotSpeechReady,
+    onBotPrepStart, onBotPrepEnd, onBotGenerating, onBotSpeechReady, onBotTranscriptChunk,
   } = options;
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
@@ -304,6 +316,20 @@ export function useWebSocket(options: UseWebSocketOptions) {
         }
 
         // Bot messages (Milestone 5)
+        case 'bot:prep:start': {
+          const payload = message.payload as { speech: SpeechRole; botId: string };
+          console.log('[WS] Bot prep started:', payload.speech);
+          onBotPrepStart?.(payload.speech, payload.botId);
+          break;
+        }
+
+        case 'bot:prep:end': {
+          const payload = message.payload as { speech: SpeechRole };
+          console.log('[WS] Bot prep ended:', payload.speech);
+          onBotPrepEnd?.(payload.speech);
+          break;
+        }
+
         case 'bot:speech:generating': {
           const payload = message.payload as BotSpeechGeneratingPayload;
           console.log('[WS] Bot generating speech:', payload.speechRole);
@@ -315,6 +341,13 @@ export function useWebSocket(options: UseWebSocketOptions) {
           const payload = message.payload as BotSpeechReadyPayload;
           console.log('[WS] Bot speech ready:', payload.speechRole, '(' + payload.speechText.length + ' chars)');
           onBotSpeechReady?.(payload.speechRole, payload.speechText);
+          break;
+        }
+
+        case 'bot:transcript:chunk': {
+          const payload = message.payload as { sentence: string; index: number; total: number; isFinal: boolean };
+          console.log(`[WS] Bot transcript chunk ${payload.index + 1}/${payload.total}: "${payload.sentence.substring(0, 30)}..."`);
+          onBotTranscriptChunk?.(payload.sentence, payload.index, payload.total, payload.isFinal);
           break;
         }
 
@@ -366,13 +399,29 @@ export function useWebSocket(options: UseWebSocketOptions) {
       setConnectionError(null); // Clear any previous errors
       reconnectAttempts.current = 0;
 
-      // Join the room directly (not via send() to avoid race condition)
-      const message = {
-        type: 'room:join',
-        payload: { code: roomCode, displayName: displayName },
-      };
-      ws.send(JSON.stringify(message));
-      console.log('[WS] Sent: room:join', message.payload);
+      // Milestone 5: Handle practice mode (bot room creation)
+      if (roomCode === 'practice' && botConfig) {
+        const message = {
+          type: 'bot:room:create',
+          payload: {
+            resolution: botConfig.resolution,
+            displayName: displayName,
+            botCharacter: botConfig.character,
+            userSide: botConfig.userSide,
+            userLanguage: botConfig.language,
+          },
+        };
+        ws.send(JSON.stringify(message));
+        console.log('[WS] Sent: bot:room:create', message.payload);
+      } else {
+        // Join the room directly (not via send() to avoid race condition)
+        const message = {
+          type: 'room:join',
+          payload: { code: roomCode, displayName: displayName },
+        };
+        ws.send(JSON.stringify(message));
+        console.log('[WS] Sent: room:join', message.payload);
+      }
 
       onConnect?.();
     };
@@ -405,7 +454,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
         setConnectionError('Connection failed');
       }
     };
-  }, [roomCode, displayName, handleMessage, send, setConnected, setConnecting, setConnectionError, onConnect, onDisconnect]);
+  }, [roomCode, displayName, botConfig, handleMessage, send, setConnected, setConnecting, setConnectionError, onConnect, onDisconnect]);
 
   // Disconnect from WebSocket
   const disconnect = useCallback(() => {

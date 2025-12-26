@@ -164,8 +164,8 @@ You are speaking for the ${side === 'AFF' ? 'AFFIRMATIVE' : 'NEGATIVE'} side.`;
 export function generateUserPrompt(resolution, speech, opponentArguments, ownArguments, flowTranscripts) {
     let prompt = `RESOLUTION: ${resolution}\n\n`;
     prompt += `CURRENT SPEECH: ${speech}\n\n`;
-    // Add flow context for response speeches
-    if (speech !== 'AC' && speech !== 'NC') {
+    // Add flow context for response speeches (all except AC which is first)
+    if (speech !== 'AC') {
         if (opponentArguments.length > 0) {
             prompt += `OPPONENT'S ARGUMENTS TO ADDRESS:\n`;
             for (const arg of opponentArguments) {
@@ -183,14 +183,22 @@ export function generateUserPrompt(resolution, speech, opponentArguments, ownArg
             prompt += '\n';
         }
     }
-    // Add relevant transcripts for context
+    // Add relevant transcripts for context (more generous limit for better responses)
     const relevantSpeeches = getRelevantSpeeches(speech);
     for (const s of relevantSpeeches) {
         if (flowTranscripts[s]) {
-            prompt += `${s} TRANSCRIPT (summary):\n${flowTranscripts[s].substring(0, 500)}...\n\n`;
+            // Use up to 1500 chars (~250 words) for better context
+            const transcript = flowTranscripts[s];
+            const limit = 1500;
+            if (transcript.length > limit) {
+                prompt += `${s} TRANSCRIPT:\n${transcript.substring(0, limit)}...\n\n`;
+            }
+            else {
+                prompt += `${s} TRANSCRIPT:\n${transcript}\n\n`;
+            }
         }
     }
-    prompt += `Generate your ${speech} speech now. Speak naturally and persuasively.`;
+    prompt += `Generate your ${speech} speech now. Respond directly to the opponent's arguments above. Speak naturally and persuasively.`;
     return prompt;
 }
 // Get which prior speeches are relevant for context
@@ -216,14 +224,17 @@ export function getSpeechDuration(speech) {
     }
 }
 // Estimate target word count based on speech duration
+// Reduced to ~60% of full time to save TTS credits and keep speeches concise
 // Average speaking rate: ~150 words per minute
 export function getTargetWordCount(speech) {
-    const duration = getSpeechDuration(speech);
-    const wordsPerMinute = 150;
-    const targetWords = (duration / 60) * wordsPerMinute;
-    return {
-        min: Math.floor(targetWords * 0.7),
-        max: Math.floor(targetWords * 1.1),
+    // Shorter targets to save ElevenLabs credits (~2000 char limit = ~330 words)
+    const targets = {
+        'AC': { min: 250, max: 350 }, // ~2 min worth
+        'NC': { min: 300, max: 400 }, // ~2.5 min worth
+        '1AR': { min: 200, max: 280 }, // ~1.5 min worth
+        'NR': { min: 250, max: 350 }, // ~2 min worth
+        '2AR': { min: 150, max: 220 }, // ~1 min worth
     };
+    return targets[speech] || { min: 200, max: 300 };
 }
 //# sourceMappingURL=characterPrompts.js.map

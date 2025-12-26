@@ -35,12 +35,23 @@ interface BotManagerCallbacks {
   broadcastToRoom: BroadcastFunction;
   onSpeechStart: (roomId: string, speech: SpeechRole, botId: string) => void;
   onSpeechEnd: (roomId: string, speech: SpeechRole) => void;
+  onTTSReady: (roomId: string) => void;  // Called when TTS is about to start (timer should start)
+}
+
+// Track progressive transcript state
+interface TranscriptState {
+  sentences: string[];
+  currentIndex: number;
+  startTime: number;  // When playback started
+  totalDurationMs: number;  // Estimated total playback duration
+  intervalId: NodeJS.Timeout | null;  // Timer for sending sentences
 }
 
 class BotManager {
   private callbacks: BotManagerCallbacks | null = null;
   private activeSpeechTimers: Map<string, NodeJS.Timeout> = new Map();
   private preGeneratedSpeeches: Map<string, string> = new Map();
+  private transcriptStates: Map<string, TranscriptState> = new Map();
 
   /**
    * Initialize the bot manager with callbacks
@@ -142,12 +153,76 @@ class BotManager {
     // Add speech to flow transcripts (for argument extraction)
     flowStateManager.addTranscript(roomId, speech, speechText);
 
-    // Notify clients that speech is ready
+    // Split speech into sentences for progressive transcript
+    const sentences = this.splitIntoSentences(speechText);
+
+    // Estimate playback duration: ~150 words per minute = 2.5 words per second
+    const wordCount = speechText.split(/\s+/).length;
+    const estimatedDurationMs = (wordCount / 2.5) * 1000;  // Convert to ms
+
+    // Initialize transcript state for progressive display
+    const transcriptState: TranscriptState = {
+      sentences,
+      currentIndex: 0,
+      startTime: Date.now(),
+      totalDurationMs: estimatedDurationMs,
+      intervalId: null,
+    };
+    this.transcriptStates.set(roomId, transcriptState);
+
+    // Set up time-based sentence sending
+    const msPerSentence = estimatedDurationMs / sentences.length;
+    console.log(`[BotManager] Transcript: ${sentences.length} sentences over ~${Math.round(estimatedDurationMs / 1000)}s (${Math.round(msPerSentence)}ms each)`);
+
+    // Start sending sentences at timed intervals
+    transcriptState.intervalId = setInterval(() => {
+      const state = this.transcriptStates.get(roomId);
+      if (!state || !this.callbacks) {
+        if (state?.intervalId) clearInterval(state.intervalId);
+        return;
+      }
+
+      if (state.currentIndex < state.sentences.length) {
+        this.callbacks.broadcastToRoom(roomId, {
+          type: 'bot:transcript:chunk',
+          payload: {
+            sentence: state.sentences[state.currentIndex],
+            index: state.currentIndex,
+            total: state.sentences.length,
+            isFinal: state.currentIndex === state.sentences.length - 1,
+          },
+        });
+        state.currentIndex++;
+      }
+
+      // Stop interval when all sentences sent
+      if (state.currentIndex >= state.sentences.length && state.intervalId) {
+        clearInterval(state.intervalId);
+        state.intervalId = null;
+      }
+    }, msPerSentence);
+
+    // Send first sentence immediately
+    if (sentences.length > 0 && this.callbacks) {
+      this.callbacks.broadcastToRoom(roomId, {
+        type: 'bot:transcript:chunk',
+        payload: {
+          sentence: sentences[0],
+          index: 0,
+          total: sentences.length,
+          isFinal: sentences.length === 1,
+        },
+      });
+      transcriptState.currentIndex = 1;
+    }
+
+    // Notify clients that speech is ready (but don't send full text - we'll stream it)
     this.callbacks.broadcastToRoom(roomId, {
       type: 'bot:speech:ready',
       payload: {
         speechRole: speech,
-        speechText,
+        speechText: '', // Empty - will stream progressively
+        totalSentences: sentences.length,
       },
     });
 
@@ -164,7 +239,22 @@ class BotManager {
       return;
     }
 
+    // Notify clients that TTS is starting (required for audio playback initialization)
+    this.callbacks.broadcastToRoom(roomId, {
+      type: 'tts:start',
+      payload: {
+        speakerId: botId,
+        speechId: speech,
+        text: speechText,
+      },
+    });
+
+    // Signal that TTS is ready - this starts the speech timer
+    this.callbacks.onTTSReady(roomId);
+
     // Queue TTS with bot's voice settings
+    // Note: Progressive transcript is now sent via time-based intervals, not chunk-based
+
     ttsSessionManager.queueTTS(
       botId,
       roomId,
@@ -186,12 +276,16 @@ class BotManager {
           },
         },
       },
-      onChunk,
+      onChunk,  // Just forward audio chunks
       () => {
+        // TTS generation complete - but transcript is time-based, don't stop it here
+        // The transcript interval will continue until all sentences sent or speech ends
         setBotGenerating(roomId, false);
         onComplete();
       },
       (error) => {
+        // On error, clean up the transcript interval
+        this.cleanupTranscriptState(roomId);
         setBotGenerating(roomId, false);
         onError(error);
       }
@@ -236,7 +330,21 @@ class BotManager {
   }
 
   /**
-   * Stop current bot speech (when user skips)
+   * Clean up transcript interval and state
+   */
+  private cleanupTranscriptState(roomId: string): void {
+    const state = this.transcriptStates.get(roomId);
+    if (state) {
+      if (state.intervalId) {
+        clearInterval(state.intervalId);
+        state.intervalId = null;
+      }
+      this.transcriptStates.delete(roomId);
+    }
+  }
+
+  /**
+   * Stop current bot speech (when timer ends or user skips)
    */
   stopBotSpeech(roomId: string): void {
     const timer = this.activeSpeechTimers.get(roomId);
@@ -244,6 +352,9 @@ class BotManager {
       clearTimeout(timer);
       this.activeSpeechTimers.delete(roomId);
     }
+
+    // Clean up transcript interval
+    this.cleanupTranscriptState(roomId);
 
     const botId = roomManager.getBotParticipantId(roomId);
     if (botId) {
@@ -298,6 +409,32 @@ class BotManager {
    */
   private delay(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Split text into sentences for progressive display
+   */
+  private splitIntoSentences(text: string): string[] {
+    // Split on sentence boundaries (. ! ?)
+    // Keep the punctuation with the sentence
+    const sentences = text.split(/(?<=[.!?])\s+/).filter(s => s.trim().length > 0);
+
+    // If we have very few sentences (long compound sentences), split on commas/semicolons too
+    if (sentences.length < 10) {
+      const result: string[] = [];
+      for (const sentence of sentences) {
+        // Split long sentences on commas/semicolons if > 100 chars
+        if (sentence.length > 100) {
+          const parts = sentence.split(/(?<=[,;])\s+/).filter(s => s.trim().length > 0);
+          result.push(...parts);
+        } else {
+          result.push(sentence);
+        }
+      }
+      return result;
+    }
+
+    return sentences;
   }
 }
 

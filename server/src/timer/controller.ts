@@ -35,6 +35,13 @@ export class TimerController {
     return this.currentSpeechIndex;
   }
 
+  // Check if timer is paused (has time remaining but not running)
+  isPaused(): boolean {
+    return !this.state.isRunning &&
+           this.state.currentSpeech !== null &&
+           this.state.speechTimeRemaining > 0;
+  }
+
   // Start the debate - begins with AC (Affirmative Constructive)
   startDebate(): void {
     this.currentSpeechIndex = 0;

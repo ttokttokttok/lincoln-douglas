@@ -178,17 +178,23 @@ class DebateManager {
         this.callbacks?.onDebateStart(roomId);
         // Start timeout timers
         this.startTimeoutTimers(roomId);
-        // Start the first speech (AC)
-        timerController.startDebate();
         // Set the current speaker (AFF for AC)
         debateState.currentSpeaker = affParticipant.id;
         debateState.currentSpeech = 'AC';
-        this.callbacks?.onSpeechStart(roomId, 'AC', affParticipant.id);
-        // If the first speaker is a bot, trigger bot speech (Milestone 5)
+        // If the first speaker is a bot, enter prep phase first (timer starts when TTS begins)
         if (affParticipant.isBot && room.mode === 'practice') {
-            console.log('[DebateController] First speaker is bot, triggering AC speech');
+            console.log('[DebateController] First speaker is bot, entering prep phase for AC');
+            // Don't start timer yet - will start when TTS begins
+            timerController.startDebate(); // Initialize debate but don't tick yet
+            timerController.pause(); // Pause immediately until TTS ready
+            this.callbacks?.onBotPrepStart?.(roomId, 'AC', affParticipant.id);
             // Use setTimeout to allow the room state to be sent first
             setTimeout(() => this.triggerBotSpeech(roomId, 'AC'), 500);
+        }
+        else {
+            // Human speaker - start timer immediately
+            timerController.startDebate();
+            this.callbacks?.onSpeechStart(roomId, 'AC', affParticipant.id);
         }
         return true;
     }
@@ -259,16 +265,52 @@ class DebateManager {
         const speaker = participants.find(p => p.side === speakerSide);
         if (!speaker)
             return false;
-        debate.timer.startNextSpeech();
+        // Set current speaker/speech state
         debate.state.currentSpeaker = speaker.id;
         debate.state.currentSpeech = nextSpeech;
-        this.callbacks?.onSpeechStart(roomId, nextSpeech, speaker.id);
-        // If the next speaker is a bot, trigger bot speech (Milestone 5)
+        // If the next speaker is a bot, DON'T start the timer yet
+        // The timer will start when TTS begins (via startBotSpeechTimer)
         if (speaker.isBot && room.mode === 'practice') {
-            console.log(`[DebateController] Next speaker is bot, triggering ${nextSpeech} speech`);
-            // Use setTimeout to allow the room state to be sent first
+            console.log(`[DebateController] Bot turn - entering prep phase for ${nextSpeech}`);
+            // Notify clients that bot is preparing (before timer starts)
+            this.callbacks?.onBotPrepStart?.(roomId, nextSpeech, speaker.id);
+            // Use setTimeout to allow the prep message to be sent first
             setTimeout(() => this.triggerBotSpeech(roomId, nextSpeech), 500);
+            return true;
         }
+        // For human speakers, start the timer immediately
+        debate.timer.startNextSpeech();
+        this.callbacks?.onSpeechStart(roomId, nextSpeech, speaker.id);
+        return true;
+    }
+    /**
+     * Start the bot speech timer (called when TTS begins playing)
+     * This separates the "prep phase" from the "speaking phase"
+     */
+    startBotSpeechTimer(roomId) {
+        const debate = this.debates.get(roomId);
+        if (!debate || !debate.state.isActive)
+            return false;
+        const room = roomManager.getRoom(roomId);
+        if (!room || room.mode !== 'practice')
+            return false;
+        const speech = debate.state.currentSpeech;
+        const speakerId = debate.state.currentSpeaker;
+        if (!speech || !speakerId)
+            return false;
+        console.log(`[DebateController] Starting bot speech timer for ${speech}`);
+        // Check if timer was paused (AC case) or needs to be started (other cases)
+        if (debate.timer.isPaused()) {
+            // Resume the paused timer
+            debate.timer.resume();
+        }
+        else {
+            // Start the speech timer
+            debate.timer.startNextSpeech();
+        }
+        // Notify prep ended and speech started
+        this.callbacks?.onBotPrepEnd?.(roomId, speech);
+        this.callbacks?.onSpeechStart(roomId, speech, speakerId);
         return true;
     }
     // End current speech early
@@ -323,15 +365,13 @@ class DebateManager {
         (chunk, index) => {
             this.callbacks?.onBotSpeechChunk?.(roomId, chunk, index);
         }, 
-        // onComplete
+        // onComplete - called when TTS generation finishes (all audio chunks sent)
+        // NOTE: We do NOT end the speech here because TTS generation is faster than playback.
+        // The client is still playing audio when this fires. Let the timer handle speech end.
         () => {
-            console.log(`[DebateController] Bot speech ${speech} completed`);
+            console.log(`[DebateController] Bot TTS generation complete for ${speech} - audio still playing on client`);
             this.callbacks?.onBotSpeechComplete?.(roomId, speech);
-            // End the bot's speech timer (they spoke their piece)
-            const debate = this.debates.get(roomId);
-            if (debate && debate.state.currentSpeech === speech) {
-                this.endSpeech(roomId);
-            }
+            // Timer will end the speech when time runs out (or bot finishes early if audio is shorter than time)
         }, 
         // onError
         (error) => {
