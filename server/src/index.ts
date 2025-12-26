@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { setupWebSocketServer } from './websocket/server.js';
 import { setupRoutes } from './api/routes.js';
@@ -21,6 +23,22 @@ app.use(express.json());
 
 // REST API routes
 setupRoutes(app);
+
+// Serve static files in production
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+if (process.env.NODE_ENV === 'production') {
+  const clientDistPath = path.join(__dirname, '../../client/dist');
+  app.use(express.static(clientDistPath));
+
+  // SPA fallback - serve index.html for all non-API routes
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api') && !req.path.startsWith('/ws')) {
+      res.sendFile(path.join(clientDistPath, 'index.html'));
+    }
+  });
+}
 
 // Create HTTP server
 const server = createServer(app);

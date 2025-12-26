@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://polis.gg"><strong>Live Demo</strong></a>
+  <a href="https://debate-globally-896246269364.us-central1.run.app/"><strong>Live Demo</strong></a>
 </p>
 
 ---
@@ -535,5 +535,5 @@ MIT License — see [LICENSE](LICENSE) for details.
 </p>
 
 <p align="center">
-  <a href="https://polis.gg">polis.gg</a>
+  <a href="https://debate-globally-896246269364.us-central1.run.app/">Live Demo</a>
 </p>

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useRoomStore } from '../stores/roomStore';
+import { WS_URL } from '../lib/constants';
 import type {
   WSMessage,
   WSMessageType,
@@ -26,8 +27,6 @@ import type {
   BotSpeechGeneratingPayload,
   BotSpeechReadyPayload,
 } from '@shared/types';
-
-const WS_URL = 'ws://localhost:3001/ws';
 const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT_ATTEMPTS = 5;
 

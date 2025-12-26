@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Users, Bot, ArrowRight } from 'lucide-react';
+import { API_URL } from '../lib/constants';
 
 type Mode = 'select' | 'pvp' | 'practice';
 
@@ -17,7 +18,7 @@ export function Lobby() {
 
     setIsCreating(true);
     try {
-      const response = await fetch('http://localhost:3001/api/rooms', {
+      const response = await fetch(`${API_URL}/rooms`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ resolution }),

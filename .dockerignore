@@ -1,0 +1,39 @@
+node_modules
+*/node_modules
+**/node_modules
+
+# Build outputs (will be rebuilt in Docker)
+client/dist
+server/dist
+shared/dist
+
+# Git
+.git
+.gitignore
+
+# Environment files (will be set via Cloud Run)
+.env
+*.env
+server/.env
+
+# IDE
+.vscode
+.idea
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docs
+*.md
+!README.md
+
+# Test files
+*.test.ts
+*.spec.ts
+__tests__
+coverage

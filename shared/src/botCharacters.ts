@@ -5,7 +5,7 @@
  * personalities, difficulties, and voice characteristics.
  */
 
-import type { BotCharacter, BotCharacterInfo, BotDifficulty } from './types';
+import type { BotCharacter, BotCharacterInfo, BotDifficulty } from './types.js';
 
 // Character display names for the bot participant
 export const BOT_DISPLAY_NAMES: Record<BotCharacter, string> = {

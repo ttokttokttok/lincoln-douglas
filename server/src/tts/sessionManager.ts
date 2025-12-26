@@ -8,7 +8,7 @@
  */
 
 import { LanguageCode, TTSRequest, EmotionMarkers } from '@shared/types';
-import { elevenLabsTTS } from './elevenLabsTts';
+import { elevenLabsTTS } from './elevenLabsTts.js';
 
 interface TTSSession {
   participantId: string;
@@ -87,7 +87,7 @@ class TTSSessionManager {
         voiceId = defaultVoice?.voiceId || elevenLabsTTS.getPresetVoices('en')[0]?.voiceId || '';
       }
 
-      this.createSession(participantId, roomId, voiceId);
+      this.createSession(participantId, roomId, voiceId as string);
       session = this.sessions.get(participantId)!;
     }
 
@@ -161,7 +161,7 @@ class TTSSessionManager {
         voiceSettings: queuedRequest.request.emotionHints
           ? elevenLabsTTS.mapEmotionToSettings(queuedRequest.request.emotionHints)
           : undefined,
-        onChunk: (chunk) => {
+        onChunk: (chunk: Buffer) => {
           queuedRequest.onChunk(chunk, chunkIndex++);
         },
         onComplete: () => {
@@ -172,7 +172,7 @@ class TTSSessionManager {
           // Process next in queue
           this.processQueue(session);
         },
-        onError: (error) => {
+        onError: (error: Error) => {
           console.error(`[TTSSession] TTS error for ${session.participantId}:`, error);
           session.isGenerating = false;
           queuedRequest.onError(error);
