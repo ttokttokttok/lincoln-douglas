@@ -4,7 +4,7 @@
   <img src="https://img.shields.io/badge/AI%20Powered-Gemini%20%2B%20ElevenLabs-orange?style=for-the-badge" alt="AI Powered"/>
 </p>
 
-<h1 align="center">Polis</h1>
+<h1 align="center">Debate Globally</h1>
 
 <h3 align="center">
   <em>Break the Language Barrier. Debate the World.</em>
@@ -73,7 +73,7 @@ This means:
 
 ## The Solution
 
-**Polis** is a real-time cross-language debate platform that enables debaters from any country to compete against each other — in their own languages.
+**Debate Globally** is a real-time cross-language debate platform that enables debaters from any country to compete against each other — in their own languages.
 
 ```
 +-------------------------------------------------------------------------+
@@ -145,7 +145,7 @@ This means:
 
 ```
 +-----------------------------------------------------------------------------+
-|                              POLIS ARCHITECTURE                              |
+|                         DEBATE GLOBALLY ARCHITECTURE                         |
 +-----------------------------------------------------------------------------+
 |                                                                              |
 |  +-----------------------------------------------------------------------+  |
@@ -467,7 +467,7 @@ C1, C2 = Contentions
 
 ## Supported Languages
 
-Polis supports **85 languages** including:
+Debate Globally supports **85 languages** including:
 
 | Region | Languages |
 |--------|-----------|
