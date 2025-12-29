@@ -4,8 +4,6 @@ export class TimerController {
     interval = null;
     callbacks;
     currentSpeechIndex = 0;
-    isPrepTime = false;
-    prepSide = null;
     constructor(callbacks) {
         this.callbacks = callbacks;
         this.state = {
@@ -13,6 +11,8 @@ export class TimerController {
             prepTime: { AFF: PREP_TIME, NEG: PREP_TIME },
             isRunning: false,
             currentSpeech: null,
+            isPrepTime: false,
+            prepSide: null,
         };
     }
     // Get the current timer state
@@ -23,6 +23,12 @@ export class TimerController {
     getCurrentSpeechIndex() {
         return this.currentSpeechIndex;
     }
+    // Check if timer is paused (has time remaining but not running)
+    isPaused() {
+        return !this.state.isRunning &&
+            this.state.currentSpeech !== null &&
+            this.state.speechTimeRemaining > 0;
+    }
     // Start the debate - begins with AC (Affirmative Constructive)
     startDebate() {
         this.currentSpeechIndex = 0;
@@ -31,8 +37,8 @@ export class TimerController {
     // Start a specific speech
     startSpeech(speech) {
         this.stopTimer();
-        this.isPrepTime = false;
-        this.prepSide = null;
+        this.state.isPrepTime = false;
+        this.state.prepSide = null;
         this.state.currentSpeech = speech;
         this.state.speechTimeRemaining = SPEECH_TIMES[speech];
         this.state.isRunning = true;
@@ -45,9 +51,8 @@ export class TimerController {
             return false; // No prep time remaining
         }
         this.stopTimer();
-        this.isPrepTime = true;
-        this.prepSide = side;
-        // Store current speech but mark as prep time
+        this.state.isPrepTime = true;
+        this.state.prepSide = side;
         this.state.isRunning = true;
         this.startPrepInterval(side);
         this.callbacks.onTick(this.getState());
@@ -55,11 +60,11 @@ export class TimerController {
     }
     // End prep time
     endPrep() {
-        if (!this.isPrepTime || !this.prepSide)
+        if (!this.state.isPrepTime || !this.state.prepSide)
             return;
         this.stopTimer();
-        this.isPrepTime = false;
-        this.prepSide = null;
+        this.state.isPrepTime = false;
+        this.state.prepSide = null;
         this.state.isRunning = false;
         this.callbacks.onTick(this.getState());
     }
@@ -75,9 +80,9 @@ export class TimerController {
     resume() {
         if (this.state.isRunning)
             return;
-        if (this.isPrepTime && this.prepSide && this.state.prepTime[this.prepSide] > 0) {
+        if (this.state.isPrepTime && this.state.prepSide && this.state.prepTime[this.state.prepSide] > 0) {
             this.state.isRunning = true;
-            this.startPrepInterval(this.prepSide);
+            this.startPrepInterval(this.state.prepSide);
         }
         else if (this.state.speechTimeRemaining > 0 && this.state.currentSpeech) {
             this.state.isRunning = true;
@@ -93,22 +98,20 @@ export class TimerController {
         const completedSpeech = this.state.currentSpeech;
         // Move to next speech
         this.currentSpeechIndex++;
+        // Determine next speech (null if debate is complete)
+        const nextSpeech = this.currentSpeechIndex < SPEECH_ORDER.length
+            ? SPEECH_ORDER[this.currentSpeechIndex]
+            : null;
+        // Update state
+        this.state.currentSpeech = null;
+        this.state.speechTimeRemaining = 0;
+        this.state.isRunning = false;
+        this.callbacks.onTick(this.getState());
+        // Always notify speech completion (so 2AR arguments get extracted!)
+        this.callbacks.onSpeechComplete(completedSpeech, nextSpeech);
+        // If debate is complete, notify after speech completion
         if (this.currentSpeechIndex >= SPEECH_ORDER.length) {
-            // Debate is complete
-            this.state.currentSpeech = null;
-            this.state.speechTimeRemaining = 0;
-            this.state.isRunning = false;
-            this.callbacks.onTick(this.getState());
             this.callbacks.onDebateComplete();
-        }
-        else {
-            // More speeches remaining
-            const nextSpeech = SPEECH_ORDER[this.currentSpeechIndex];
-            this.state.currentSpeech = null;
-            this.state.speechTimeRemaining = 0;
-            this.state.isRunning = false;
-            this.callbacks.onTick(this.getState());
-            this.callbacks.onSpeechComplete(completedSpeech, nextSpeech);
         }
     }
     // Start the next speech (called after prep or transition)

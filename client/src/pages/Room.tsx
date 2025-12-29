@@ -461,34 +461,61 @@ export function Room() {
     }
   }, [localStream, processSignal]);
 
-  // Initiate peer connection when both participants are ready
-  useEffect(() => {
-    const opponent = room?.participants.find(p => p.id !== myParticipantId);
+  // Compute opponent outside the effect for more reliable dependency tracking
+  const opponentForPeer = room?.participants.find(p => p.id !== myParticipantId);
 
+  // Initiate peer connection when both participants are ready
+  // Uses a retry mechanism to handle race conditions between localStream and room state updates
+  useEffect(() => {
     // Only initiate if:
     // 1. We have local stream
     // 2. We have an opponent
     // 3. We haven't initiated yet
     // 4. We're the "initiator" (higher ID or host)
-    if (
-      localStream &&
-      opponent &&
-      myParticipantId &&
-      !hasInitiatedRef.current &&
-      !isPeerConnected &&
-      !isPeerConnecting
-    ) {
-      // Simple tie-breaker: compare IDs, higher ID initiates
-      const shouldInitiate = myParticipantId > opponent.id;
+    const tryInitiate = () => {
+      if (
+        localStream &&
+        opponentForPeer &&
+        myParticipantId &&
+        !hasInitiatedRef.current &&
+        !isPeerConnected &&
+        !isPeerConnecting
+      ) {
+        // Simple tie-breaker: compare IDs, higher ID initiates
+        const shouldInitiate = myParticipantId > opponentForPeer.id;
 
-      if (shouldInitiate) {
-        console.log('[Room] Initiating peer connection');
-        hasInitiatedRef.current = true;
-        isInitiatorRef.current = true;
-        createPeer(true);
+        if (shouldInitiate) {
+          console.log('[Room] Initiating peer connection');
+          hasInitiatedRef.current = true;
+          isInitiatorRef.current = true;
+          createPeer(true);
+          return true;
+        }
       }
+      return false;
+    };
+
+    // Try immediately
+    if (tryInitiate()) return;
+
+    // If conditions aren't met yet, retry every 500ms for up to 5 seconds
+    // This handles race conditions where localStream or room state updates at different times
+    if (localStream && opponentForPeer && !isPeerConnected && !isPeerConnecting && !hasInitiatedRef.current) {
+      const retryInterval = setInterval(() => {
+        if (tryInitiate() || hasInitiatedRef.current || isPeerConnected) {
+          clearInterval(retryInterval);
+        }
+      }, 500);
+
+      // Cleanup: stop retrying after 5 seconds or on unmount
+      const timeout = setTimeout(() => clearInterval(retryInterval), 5000);
+
+      return () => {
+        clearInterval(retryInterval);
+        clearTimeout(timeout);
+      };
     }
-  }, [localStream, room, myParticipantId, isPeerConnected, isPeerConnecting, createPeer]);
+  }, [localStream, opponentForPeer?.id, myParticipantId, isPeerConnected, isPeerConnecting, createPeer]);
 
   // Get opponent data
   const opponent = room?.participants.find(p => p.id !== myParticipantId);

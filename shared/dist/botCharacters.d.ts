@@ -4,7 +4,7 @@
  * Four distinct debate opponent archetypes with different
  * personalities, difficulties, and voice characteristics.
  */
-import type { BotCharacter, BotCharacterInfo, BotDifficulty } from './types';
+import type { BotCharacter, BotCharacterInfo, BotDifficulty } from './types.js';
 export declare const BOT_DISPLAY_NAMES: Record<BotCharacter, string>;
 export declare const BOT_CHARACTERS: Record<BotCharacter, BotCharacterInfo>;
 export declare function getBotCharacter(id: BotCharacter): BotCharacterInfo;

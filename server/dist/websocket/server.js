@@ -14,12 +14,22 @@ class SignalingServer {
     }
     setupHeartbeat() {
         // Ping all clients every 30 seconds to detect dead connections
+        // Allow up to 3 missed pings (90 seconds) before terminating
+        // This handles background tabs and momentary network hiccups
+        const MAX_MISSED_PINGS = 3;
         setInterval(() => {
             this.wss.clients.forEach((ws) => {
                 const client = ws;
                 if (!client.isAlive) {
-                    console.log(`Client ${client.id} timed out`);
-                    return client.terminate();
+                    client.missedPings = (client.missedPings || 0) + 1;
+                    if (client.missedPings >= MAX_MISSED_PINGS) {
+                        console.log(`Client ${client.id} timed out after ${client.missedPings} missed pings`);
+                        return client.terminate();
+                    }
+                    console.log(`Client ${client.id} missed ping ${client.missedPings}/${MAX_MISSED_PINGS}`);
+                }
+                else {
+                    client.missedPings = 0;
                 }
                 client.isAlive = false;
                 client.ping();
@@ -31,6 +41,7 @@ class SignalingServer {
             const client = ws;
             client.id = uuid();
             client.isAlive = true;
+            client.missedPings = 0;
             this.clients.set(client.id, client);
             console.log(`Client connected: ${client.id}`);
             // Handle pong responses
@@ -137,6 +148,11 @@ class SignalingServer {
             }
         });
         return clientIds;
+    }
+    // Get client's room ID
+    getClientRoomId(clientId) {
+        const client = this.clients.get(clientId);
+        return client?.roomId;
     }
 }
 let signalingServer = null;

@@ -1286,6 +1286,9 @@ Different signal types are sent via different WebSocket message types:
    - [x] Implement signal queuing for async stream handling
    - [x] Implement proper signal routing (offer/answer/ice)
    - [x] Test P2P video connection between two clients
+   - [x] **Fix: Peer connection race condition** - Added retry mechanism for peer initiation (see note below)
+
+   > **Note on Peer Connection Timing (2024-12-26):** Fixed an issue where video connection would be delayed by minutes if debaters didn't select their sides immediately. The root cause was a race condition between `localStream` becoming ready and `room` state updates. The peer connection initiation effect depends on both conditions being true, but they can update at different times. The person with the "higher" ID (lexicographic UUID comparison) is responsible for initiating, but if their `localStream` wasn't ready when the opponent joined, the effect wouldn't trigger reliably. **Fix:** Added a 500ms retry mechanism that continues trying to initiate the peer connection for up to 5 seconds after both conditions are met. This ensures the connection happens regardless of the exact timing of state updates.
 
 4. **Phase 4: Timer + Debate Flow** ✅ COMPLETE
    - [x] Implement useTimer hook
@@ -1346,11 +1349,22 @@ Different signal types are sent via different WebSocket message types:
 
 | Risk | Mitigation |
 |------|------------|
+| WebSocket connection drops | Added client-side keepalive pings (25s) + lenient server heartbeat (3 missed pings = 90s before disconnect). See note below. |
 | WebRTC fails behind strict NAT | Use TURN server (Metered.ca) as fallback |
 | High latency | Measure and display latency; accept ~200ms for signaling |
 | Browser compatibility | Test Chrome, Firefox, Safari; simple-peer handles most edge cases |
 | Timer drift | Server is source of truth; clients sync on reconnect |
 | Room state lost on crash | Accept for MVP; add Redis persistence later |
+
+> **Note on Connection Stability (2024-12-26):** Fixed WebSocket disconnection issues caused by aggressive server heartbeat. The original implementation terminated clients after just ONE missed ping (30s), which was too aggressive for:
+> - Browser tabs in background (browsers throttle inactive tabs)
+> - Momentary network hiccups
+> - Slow WebSocket ping/pong processing
+>
+> **Fixes applied:**
+> 1. **Server heartbeat tolerance**: Now allows 3 missed pings (90 seconds total) before terminating
+> 2. **Client keepalive**: Client sends `ping` messages every 25 seconds to proactively keep connection alive
+> 3. **Server ping handler**: Responds with `pong` and resets missed ping counter
 
 ---
 

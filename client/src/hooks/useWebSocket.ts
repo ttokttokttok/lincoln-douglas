@@ -29,6 +29,7 @@ import type {
 } from '@shared/types';
 const RECONNECT_DELAY = 3000;
 const MAX_RECONNECT_ATTEMPTS = 5;
+const KEEPALIVE_INTERVAL = 25000; // Send keepalive every 25 seconds (before server's 30s timeout)
 
 interface SignalMessage {
   senderId: string;
@@ -129,6 +130,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttempts = useRef(0);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const keepaliveIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const {
     setConnected,
@@ -398,6 +400,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
       setConnectionError(null); // Clear any previous errors
       reconnectAttempts.current = 0;
 
+      // Start keepalive interval to prevent connection timeout
+      // This sends a ping message every 25 seconds to keep the connection alive
+      if (keepaliveIntervalRef.current) {
+        clearInterval(keepaliveIntervalRef.current);
+      }
+      keepaliveIntervalRef.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping', payload: {} }));
+        }
+      }, KEEPALIVE_INTERVAL);
+
       // Milestone 5: Handle practice mode (bot room creation)
       if (roomCode === 'practice' && botConfig) {
         const message = {
@@ -436,6 +449,13 @@ export function useWebSocket(options: UseWebSocketOptions) {
       console.log('[WS] Disconnected:', event.code, event.reason);
       setConnected(false);
       wsRef.current = null;
+
+      // Clear keepalive interval
+      if (keepaliveIntervalRef.current) {
+        clearInterval(keepaliveIntervalRef.current);
+        keepaliveIntervalRef.current = null;
+      }
+
       onDisconnect?.();
 
       // Attempt reconnection if not intentional close
@@ -460,6 +480,12 @@ export function useWebSocket(options: UseWebSocketOptions) {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
+    }
+
+    // Clear keepalive interval
+    if (keepaliveIntervalRef.current) {
+      clearInterval(keepaliveIntervalRef.current);
+      keepaliveIntervalRef.current = null;
     }
 
     const ws = wsRef.current;

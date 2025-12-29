@@ -324,7 +324,10 @@ If you cannot understand the audio or it's silent, return an empty string.`,
   }
 
   /**
-   * End a transcription session and flush remaining audio
+   * End a transcription session
+   * IMPORTANT: We intentionally DISCARD remaining audio rather than flushing it.
+   * This prevents audio captured after a speech ends from being transcribed
+   * and sent to the opponent (e.g., casual conversation between speeches).
    */
   async endSession(participantId: string): Promise<void> {
     const session = this.sessions.get(participantId);
@@ -332,14 +335,17 @@ If you cannot understand the audio or it's silent, return an empty string.`,
       return;
     }
 
-    // Flush any remaining audio
-    if (session.audioBuffer.length > 0) {
-      await this.flushBuffer(participantId);
-    }
-
-    // Clear timer
+    // Clear timer first to prevent any pending flushes
     if (session.flushTimer) {
       clearTimeout(session.flushTimer);
+      session.flushTimer = null;
+    }
+
+    // DISCARD remaining audio - don't flush it
+    // This is intentional: we don't want post-speech audio to be transcribed
+    const discardedBytes = session.bufferSize;
+    if (discardedBytes > 0) {
+      console.log(`[GeminiSTT] Discarding ${discardedBytes} bytes of post-speech audio for ${participantId}`);
     }
 
     this.sessions.delete(participantId);

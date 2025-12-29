@@ -97,6 +97,15 @@ class GeminiTranslationService {
       const translatedText = this.cleanTranslation(result.response.text());
       const latencyMs = Date.now() - startTime;
 
+      // If cleanTranslation returned empty (prompt leakage), treat as failed
+      if (!translatedText) {
+        console.warn(`[Translation] Empty result after cleaning, returning original text`);
+        return {
+          translatedText: text, // Return original text as fallback
+          latencyMs,
+        };
+      }
+
       console.log(`[Translation] ${sourceLanguage}→${targetLanguage} in ${latencyMs}ms: "${translatedText.substring(0, 50)}..."`);
 
       return {
@@ -154,13 +163,36 @@ TRANSLATION:`;
   }
 
   /**
-   * Clean up translation output
+   * Clean up translation output and detect prompt leakage
    */
   private cleanTranslation(text: string): string {
-    return text
+    let cleaned = text
       .replace(/^(TRANSLATION:|Translation:)\s*/i, '')
       .replace(/^["']|["']$/g, '') // Remove surrounding quotes
       .trim();
+
+    // Detect prompt leakage - if the output contains instruction-like text, it's invalid
+    const promptLeakagePatterns = [
+      /CRITICAL RULES:/i,
+      /Output ONLY/i,
+      /NEVER generate/i,
+      /NEVER add/i,
+      /preserve debate terminology/i,
+      /INPUT TEXT:/i,
+      /Lincoln-Douglas debate/i,
+      /translate.*literally/i,
+      /no quotes.*labels.*explanations/i,
+    ];
+
+    for (const pattern of promptLeakagePatterns) {
+      if (pattern.test(cleaned)) {
+        console.error(`[Translation] Prompt leakage detected: "${cleaned.substring(0, 100)}..."`);
+        // Return empty string - caller should handle this as a failed translation
+        return '';
+      }
+    }
+
+    return cleaned;
   }
 
   /**

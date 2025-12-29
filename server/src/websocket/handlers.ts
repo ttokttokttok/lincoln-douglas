@@ -567,6 +567,14 @@ export function handleMessage(
       handleBotSpeechSkip(client, message.payload as BotSpeechSkipPayload, server);
       break;
 
+    // Keepalive ping from client
+    case 'ping':
+      // Mark client as alive and respond with pong
+      client.isAlive = true;
+      client.missedPings = 0;
+      server.send(client.id, { type: 'pong', payload: {} });
+      break;
+
     default:
       console.warn(`Unknown message type: ${message.type}`);
       server.sendError(client.id, `Unknown message type: ${message.type}`);

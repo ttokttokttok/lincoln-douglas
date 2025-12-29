@@ -149,7 +149,10 @@ export type WSMessageType =
   | 'bot:speech:generating'   // Server -> Client: Bot is generating speech
   | 'bot:speech:ready'        // Server -> Client: Bot speech ready to play
   | 'bot:speech:skip'         // Client -> Server: Skip current bot speech
-  | 'bot:transcript:chunk';   // Server -> Client: Progressive transcript chunk
+  | 'bot:transcript:chunk'    // Server -> Client: Progressive transcript chunk
+  // Connection keepalive
+  | 'ping'                    // Client -> Server: Keepalive ping
+  | 'pong';                   // Server -> Client: Keepalive pong response
 
 // Base WebSocket message
 export interface WSMessage<T = unknown> {
