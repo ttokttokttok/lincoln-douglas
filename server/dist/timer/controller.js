@@ -4,6 +4,7 @@ export class TimerController {
     interval = null;
     callbacks;
     currentSpeechIndex = 0;
+    isEndingSpeech = false; // Guard against double endSpeech() calls
     constructor(callbacks) {
         this.callbacks = callbacks;
         this.state = {
@@ -92,8 +93,14 @@ export class TimerController {
     }
     // End current speech early and move to next
     endSpeech() {
+        // Guard against race condition: prevent double endSpeech() calls
+        if (this.isEndingSpeech) {
+            console.warn('[TimerController] endSpeech() already in progress, ignoring duplicate call');
+            return;
+        }
         if (!this.state.currentSpeech)
             return;
+        this.isEndingSpeech = true; // Set guard
         this.stopTimer();
         const completedSpeech = this.state.currentSpeech;
         // Move to next speech
@@ -113,6 +120,7 @@ export class TimerController {
         if (this.currentSpeechIndex >= SPEECH_ORDER.length) {
             this.callbacks.onDebateComplete();
         }
+        this.isEndingSpeech = false; // Release guard
     }
     // Start the next speech (called after prep or transition)
     startNextSpeech() {

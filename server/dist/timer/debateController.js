@@ -338,8 +338,12 @@ class DebateManager {
     cleanupRoom(roomId) {
         const debate = this.debates.get(roomId);
         if (debate) {
+            // Clear all timeout timers to prevent resource leaks
+            this.clearTimeoutTimers(roomId);
             debate.timer.destroy();
+            debate.state.isActive = false;
             this.debates.delete(roomId);
+            console.log(`[DebateController] Cleaned up debate for room ${roomId}`);
         }
         // Clean up bot manager state
         botManager.cleanupRoom(roomId);

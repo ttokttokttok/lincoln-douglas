@@ -17,7 +17,7 @@ import type {
   BotRoomCreatePayload,
   BotSpeechSkipPayload,
 } from '@shared/types';
-import { SPEECH_ORDER, SPEECH_SIDES } from '@shared/types';
+import { SPEECH_ORDER, SPEECH_SIDES, BOT_CHARACTERS } from '@shared/types';
 import {
   createBotParticipantState,
   registerBot,
@@ -86,6 +86,10 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
 
     // Get current speech (default to AC if not set)
     const currentSpeech = (room.currentSpeech ?? 'AC') as SpeechRole;
+
+    // Capture speech version at start of this transcription processing
+    // Used to check if speech is still current before queueing TTS
+    const speechVersion = flowStateManager.getSpeechVersion(roomId);
 
     // Broadcast transcript to all participants in the room
     server.broadcastToRoomAll(roomId, {
@@ -175,7 +179,8 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
             });
 
             // Generate TTS for listeners who need this translation spoken
-            if (elevenLabsTTS.isReady()) {
+            // IMPORTANT: Check speech version to skip stale translations from previous speech
+            if (elevenLabsTTS.isReady() && flowStateManager.isSpeechVersionCurrent(roomId, speechVersion)) {
               generateTTSForListeners(
                 roomId,
                 participantId,
@@ -185,6 +190,8 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
                 detectedEmotion,  // Pass emotion hints to TTS
                 server
               );
+            } else if (!flowStateManager.isSpeechVersionCurrent(roomId, speechVersion)) {
+              console.log(`[TTS] Skipping stale translation (speech ended before TTS could queue)`);
             }
           }
         } catch (error) {
@@ -226,6 +233,10 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
     onSpeechEnd: async (roomId: string, speech: SpeechRole, nextSpeech: SpeechRole | null) => {
       const room = roomManager.getRoom(roomId);
 
+      // CRITICAL: Increment speech version to invalidate any in-flight translations
+      // This prevents stale translations from queueing TTS after speech ends
+      flowStateManager.incrementSpeechVersion(roomId);
+
       // Clear any pending TTS from the speaker who just finished
       // This prevents accumulated TTS from playing during the next speaker's turn
       if (room?.currentSpeaker) {
@@ -248,22 +259,31 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
       });
 
       // Extract arguments from the completed speech
+      // Register as pending extraction so onDebateEnd can await it
       if (argumentExtractor.isReady()) {
-        const room = roomManager.getRoom(roomId);
-        if (room) {
-          const transcript = flowStateManager.getSpeechTranscript(roomId, speech);
-          const priorArguments = flowStateManager.getArguments(roomId);
+        const currentRoom = roomManager.getRoom(roomId);
+        if (currentRoom) {
+          const extractionPromise = (async () => {
+            const transcript = flowStateManager.getSpeechTranscript(roomId, speech);
+            const priorArguments = flowStateManager.getArguments(roomId);
 
-          const extractedArgs = await argumentExtractor.extractArguments(transcript, {
-            resolution: room.resolution,
-            speech,
-            priorArguments,
-          });
+            const extractedArgs = await argumentExtractor.extractArguments(transcript, {
+              resolution: currentRoom.resolution,
+              speech,
+              priorArguments,
+            });
 
-          if (extractedArgs.length > 0) {
-            flowStateManager.addArguments(roomId, extractedArgs);
-            console.log(`[Flow] Extracted ${extractedArgs.length} arguments from ${speech}`);
-          }
+            if (extractedArgs.length > 0) {
+              flowStateManager.addArguments(roomId, extractedArgs);
+              console.log(`[Flow] Extracted ${extractedArgs.length} arguments from ${speech}`);
+            }
+          })();
+
+          // Register this extraction so ballot generation can wait for it
+          flowStateManager.registerPendingExtraction(roomId, extractionPromise);
+
+          // Still await it here for proper flow
+          await extractionPromise;
         }
       }
 
@@ -293,6 +313,18 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
     },
     onDebateEnd: async (roomId: string) => {
       const room = roomManager.getRoom(roomId);
+
+      // CRITICAL: Snapshot room data BEFORE any async operations
+      // This prevents issues if the room is deleted during cleanup
+      const roomSnapshot = room ? {
+        resolution: room.resolution,
+        participants: Array.from(room.participants.values()).map(p => ({
+          id: p.id,
+          displayName: p.displayName,
+          side: p.side,
+        })),
+      } : null;
+
       if (room) {
         room.currentSpeech = null;
         room.currentSpeaker = null;
@@ -318,21 +350,21 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
       ttsSessionManager.endRoomSessions(roomId);
       console.log(`[Cleanup] Cleaned up TTS sessions for room ${roomId}`);
 
-      // Generate ballot and flow state
-      if (ballotGenerator.isReady() && room) {
-        // Wait briefly for any in-flight 2AR extraction from onSpeechEnd callback
-        // (The onSpeechEnd is async but not awaited by the timer callback chain)
-        await new Promise(resolve => setTimeout(resolve, 500));
+      // Generate ballot and flow state using the snapshot
+      if (ballotGenerator.isReady() && roomSnapshot) {
+        // Wait for all pending argument extractions to complete
+        // This properly handles the async onSpeechEnd callback chain
+        await flowStateManager.waitForPendingExtractions(roomId);
 
-        // Ensure 2AR arguments are extracted (in case the async onSpeechEnd hasn't completed)
+        // Fallback: Ensure 2AR arguments are extracted if still missing
         const existing2ARArgs = flowStateManager.getArgumentsBySpeech(roomId, '2AR');
         if (existing2ARArgs.length === 0 && argumentExtractor.isReady()) {
           const transcript = flowStateManager.getSpeechTranscript(roomId, '2AR');
           if (transcript && transcript.length > 50) {
-            console.log('[Flow] Ensuring 2AR extraction before ballot...');
+            console.log('[Flow] Ensuring 2AR extraction before ballot (fallback)...');
             const priorArguments = flowStateManager.getArguments(roomId);
             const extractedArgs = await argumentExtractor.extractArguments(transcript, {
-              resolution: room.resolution,
+              resolution: roomSnapshot.resolution,
               speech: '2AR',
               priorArguments,
             });
@@ -344,12 +376,11 @@ export function initializeDebateCallbacks(server: SignalingServer): void {
         }
 
         const flowState = flowStateManager.getFlowState(roomId);
-        const participants = Array.from(room.participants.values());
-        const affParticipant = participants.find(p => p.side === 'AFF');
-        const negParticipant = participants.find(p => p.side === 'NEG');
+        const affParticipant = roomSnapshot.participants.find(p => p.side === 'AFF');
+        const negParticipant = roomSnapshot.participants.find(p => p.side === 'NEG');
 
         const ballot = await ballotGenerator.generateBallot({
-          resolution: room.resolution,
+          resolution: roomSnapshot.resolution,
           affName: affParticipant?.displayName || 'Affirmative',
           negName: negParticipant?.displayName || 'Negative',
           flowState,
@@ -798,15 +829,19 @@ function handleRoomStart(client: ExtendedWebSocket, server: SignalingServer): vo
     return;
   }
 
-  // Verify room is ready to start
-  if (room.status !== 'ready') {
-    server.sendError(client.id, 'Room is not ready to start');
+  // Atomically transition room status from 'ready' to 'in_progress'
+  // This prevents race conditions when both participants try to start simultaneously
+  const transition = roomManager.transitionRoomStatus(client.roomId, 'ready', 'in_progress');
+  if (!transition.success) {
+    server.sendError(client.id, transition.error || 'Cannot start debate');
     return;
   }
 
-  // Start the debate
+  // Start the debate (room is now atomically in 'in_progress' state)
   const success = debateManager.startDebate(client.roomId);
   if (!success) {
+    // Rollback status if debate start fails
+    roomManager.setRoomStatus(client.roomId, 'ready');
     server.sendError(client.id, 'Failed to start debate');
   }
 }
@@ -1232,8 +1267,8 @@ function handleBotRoomCreate(
     return;
   }
 
-  // Validate bot character
-  const validCharacters = ['scholar', 'passionate', 'aggressive', 'beginner'];
+  // Validate bot character using shared definitions
+  const validCharacters = Object.keys(BOT_CHARACTERS);
   if (!validCharacters.includes(botCharacter)) {
     server.sendError(client.id, 'Invalid bot character');
     return;

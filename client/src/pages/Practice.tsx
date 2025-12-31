@@ -1,36 +1,23 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowRight, Bot, Scale } from 'lucide-react';
-import type { BotCharacter, Side, LanguageCode } from '@shared/types';
+import { ArrowRight, Bot, Scale, Globe } from 'lucide-react';
+import type { BotCharacter, Side, LanguageCode, BotCharacterInfo } from '@shared/types';
+import { getAllBotCharacters } from '@shared/types';
 import { BotCharacterCard } from '../components/BotCharacterCard';
 import { useRoomStore } from '../stores/roomStore';
 
-// Bot character definitions (from shared/botCharacters.ts)
-const BOT_CHARACTERS = [
-  {
-    id: 'scholar' as BotCharacter,
-    name: 'The Scholar',
-    description: 'Evidence-heavy, measured tone, logical structure. Emphasizes warrants and citations.',
-    difficulty: 'hard' as const,
-  },
-  {
-    id: 'passionate' as BotCharacter,
-    name: 'The Passionate Advocate',
-    description: 'Values-focused, emotional delivery, moral framing. Appeals to justice and rights.',
-    difficulty: 'medium' as const,
-  },
-  {
-    id: 'aggressive' as BotCharacter,
-    name: 'The Aggressive Challenger',
-    description: 'Direct attacks, turns arguments, pressure-heavy. Identifies dropped points.',
-    difficulty: 'hard' as const,
-  },
-  {
-    id: 'beginner' as BotCharacter,
-    name: 'The Beginner',
-    description: 'Simple arguments, slower pace, good for learning. Makes occasional logical gaps.',
-    difficulty: 'easy' as const,
-  },
+// Get bot characters from shared definitions
+const BOT_CHARACTERS: BotCharacterInfo[] = getAllBotCharacters();
+
+// Supported languages for practice mode
+const SUPPORTED_LANGUAGES: { code: LanguageCode; name: string }[] = [
+  { code: 'en', name: 'English' },
+  { code: 'es', name: 'Spanish' },
+  { code: 'fr', name: 'French' },
+  { code: 'de', name: 'German' },
+  { code: 'ja', name: 'Japanese' },
+  { code: 'ko', name: 'Korean' },
+  { code: 'zh', name: 'Chinese' },
 ];
 
 // Suggested resolutions for practice
@@ -52,7 +39,9 @@ export function Practice() {
   const [resolution, setResolution] = useState('');
   const [selectedCharacter, setSelectedCharacter] = useState<BotCharacter | null>(null);
   const [selectedSide, setSelectedSide] = useState<Side | null>(null);
+  const [selectedLanguage, setSelectedLanguage] = useState<LanguageCode>('en');
   const [isCreating, setIsCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const displayName = sessionStorage.getItem('displayName') || 'Debater';
 
@@ -60,24 +49,31 @@ export function Practice() {
     if (!resolution || !selectedCharacter || !selectedSide) return;
 
     setIsCreating(true);
+    setError(null);
 
-    // Store bot configuration for the room
-    setBotConfig({
-      character: selectedCharacter,
-      userSide: selectedSide,
-      resolution,
-      language: 'en' as LanguageCode, // Default to English for now
-    });
-
-    // Navigate to room with practice mode indicator
-    navigate('/room/practice', {
-      state: {
-        isPractice: true,
-        resolution,
-        botCharacter: selectedCharacter,
+    try {
+      // Store bot configuration for the room
+      setBotConfig({
+        character: selectedCharacter,
         userSide: selectedSide,
-      }
-    });
+        resolution,
+        language: selectedLanguage,
+      });
+
+      // Navigate to room with practice mode indicator
+      navigate('/room/practice', {
+        state: {
+          isPractice: true,
+          resolution,
+          botCharacter: selectedCharacter,
+          userSide: selectedSide,
+          language: selectedLanguage,
+        }
+      });
+    } catch (err) {
+      setError('Failed to create practice room. Please try again.');
+      setIsCreating(false);
+    }
   };
 
   return (
@@ -162,6 +158,25 @@ export function Practice() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Language selection */}
+            <div>
+              <label className="flex items-center gap-2 text-sm text-gray-400 mb-3">
+                <Globe className="w-4 h-4" />
+                Debate Language
+              </label>
+              <select
+                value={selectedLanguage}
+                onChange={(e) => setSelectedLanguage(e.target.value as LanguageCode)}
+                className="input"
+              >
+                {SUPPORTED_LANGUAGES.map((lang) => (
+                  <option key={lang.code} value={lang.code}>
+                    {lang.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <button
@@ -257,6 +272,16 @@ export function Practice() {
                 <div className="text-white">
                   <strong>Your Side:</strong> {selectedSide === 'AFF' ? 'Affirmative' : 'Negative'}
                 </div>
+                <div className="text-white">
+                  <strong>Language:</strong> {SUPPORTED_LANGUAGES.find(l => l.code === selectedLanguage)?.name}
+                </div>
+              </div>
+            )}
+
+            {/* Error display */}
+            {error && (
+              <div className="bg-red-500/20 border border-red-500 text-red-300 rounded-lg p-3 text-sm">
+                {error}
               </div>
             )}
 

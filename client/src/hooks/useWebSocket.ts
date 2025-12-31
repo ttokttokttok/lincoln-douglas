@@ -358,7 +358,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     } catch (error) {
       console.error('[WS] Failed to parse message:', error);
     }
-  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList, onTimeoutWarning, onTimeoutEnd, onBotGenerating, onBotSpeechReady]);
+  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList, onTimeoutWarning, onTimeoutEnd, onBotGenerating, onBotSpeechReady, onBotPrepStart, onBotPrepEnd, onBotTranscriptChunk]);
 
   // Send a message
   const send = useCallback((type: WSMessageType, payload: unknown) => {

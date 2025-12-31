@@ -131,16 +131,34 @@ export function Room() {
   // Update hasPeerRef whenever peer state changes
   hasPeerRef.current = isPeerConnected || isPeerConnecting;
 
+  // Track if peer creation is in progress to prevent race conditions
+  const peerCreationPromiseRef = useRef<Promise<void> | null>(null);
+
   // Process a single signal (creates peer if needed)
   const processSignal = useCallback(async (signalData: SignalData) => {
     // If we receive an offer and don't have a peer yet, create one as responder
     if (signalData.type === 'offer' && !hasPeerRef.current) {
-      console.log('[Room] Creating responder peer for incoming offer');
-      hasPeerRef.current = true; // Mark as creating to prevent duplicates
-      await createPeer(false);
+      // Check if peer creation is already in progress
+      if (peerCreationPromiseRef.current) {
+        console.log('[Room] Peer creation already in progress, waiting...');
+        await peerCreationPromiseRef.current;
+      } else {
+        console.log('[Room] Creating responder peer for incoming offer');
+        hasPeerRef.current = true; // Mark as creating to prevent duplicates
+
+        // Store the promise so concurrent signals can await it
+        // Wrap in async void to match Promise<void> type (we don't need the RTCPeerConnection return value)
+        const creationPromise = (async () => { await createPeer(false); })();
+        peerCreationPromiseRef.current = creationPromise;
+        try {
+          await creationPromise;
+        } finally {
+          peerCreationPromiseRef.current = null;
+        }
+      }
     }
 
-    // Process the signal
+    // Process the signal only after peer is ready
     signalPeer(signalData);
   }, [createPeer, signalPeer]);
 

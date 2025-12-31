@@ -4,6 +4,11 @@ import { v4 as uuid } from 'uuid';
 import type { WSMessage } from '@shared/types';
 import { handleMessage, initializeDebateCallbacks } from './handlers.js';
 import { roomManager } from '../rooms/manager.js';
+import { audioSessionManager } from '../audio/sessionManager.js';
+import { geminiSttService } from '../stt/geminiStt.js';
+import { ttsSessionManager } from '../tts/sessionManager.js';
+import { debateManager } from '../timer/debateController.js';
+import { flowStateManager } from '../flow/flowStateManager.js';
 
 // Extended WebSocket with custom properties
 export interface ExtendedWebSocket extends WebSocket {
@@ -95,6 +100,21 @@ class SignalingServer {
   }
 
   private handleDisconnect(client: ExtendedWebSocket): void {
+    // Clean up audio/STT/TTS sessions for this client
+    // This prevents resource leaks and wasted API calls
+    const audioSession = audioSessionManager.endSession(client.id);
+    if (audioSession) {
+      console.log(`[Cleanup] Ended audio session for disconnected client ${client.id}`);
+    }
+
+    // End STT session (async but we don't need to await on disconnect)
+    geminiSttService.endSession(client.id).catch(err => {
+      console.error(`[Cleanup] Error ending STT session for ${client.id}:`, err);
+    });
+
+    // Clear any TTS queue for this client
+    ttsSessionManager.clearQueue(client.id);
+
     if (client.roomId) {
       const roomId = client.roomId;
 
@@ -111,13 +131,21 @@ class SignalingServer {
         client.id
       );
 
-      // Send updated room state to remaining participants
+      // Check if room still exists (might have been deleted if empty)
       const room = roomManager.getRoom(roomId);
       if (room) {
+        // Send updated room state to remaining participants
         this.broadcastToRoom(roomId, {
           type: 'room:state',
           payload: { room: roomManager.serializeRoom(room) },
         });
+      } else {
+        // Room was deleted (last participant left) - clean up debate state
+        // This prevents resource leaks from orphaned timers and state
+        debateManager.cleanupRoom(roomId);
+        flowStateManager.clearRoom(roomId);
+        ttsSessionManager.endRoomSessions(roomId);
+        console.log(`[Cleanup] Cleaned up debate resources for deleted room ${roomId}`);
       }
 
       console.log(`Client ${client.id} disconnected from room ${roomId}`);

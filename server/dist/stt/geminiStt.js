@@ -92,6 +92,7 @@ class GeminiSTTService {
             bufferSize: 0,
             lastFlushTime: Date.now(),
             flushTimer: null,
+            pendingFlush: null,
         };
         this.sessions.set(participantId, session);
         console.log(`[GeminiSTT] Started session for ${participantId}, language: ${language}`);
@@ -114,12 +115,26 @@ class GeminiSTTService {
         // Check if we should flush
         if (session.bufferSize >= BUFFER_SIZE_BYTES) {
             // Buffer is full, flush immediately
-            await this.flushBuffer(participantId);
+            // Track the flush promise so endSession can await it
+            const flushPromise = this.flushBuffer(participantId);
+            session.pendingFlush = flushPromise;
+            await flushPromise;
+            session.pendingFlush = null;
         }
         else {
             // Set timer to flush after a short delay (for natural pauses)
-            session.flushTimer = setTimeout(() => {
-                this.flushBuffer(participantId);
+            session.flushTimer = setTimeout(async () => {
+                const currentSession = this.sessions.get(participantId);
+                if (currentSession) {
+                    const flushPromise = this.flushBuffer(participantId);
+                    currentSession.pendingFlush = flushPromise;
+                    await flushPromise;
+                    // Only clear if session still exists
+                    const sessionAfterFlush = this.sessions.get(participantId);
+                    if (sessionAfterFlush) {
+                        sessionAfterFlush.pendingFlush = null;
+                    }
+                }
             }, 500); // Flush 500ms after last chunk if buffer not full
         }
     }
@@ -160,7 +175,10 @@ class GeminiSTTService {
             maxSample = Math.max(maxSample, Math.abs(samples[i]));
         }
         const rms = Math.sqrt(sumSquares / samples.length);
-        const rmsDb = 20 * Math.log10(rms / 32768);
+        // Guard against Math.log10(0) which returns -Infinity
+        // Use a small epsilon to avoid log(0) crash
+        const rmsForDb = Math.max(rms, 1); // Minimum of 1 to avoid -Infinity
+        const rmsDb = 20 * Math.log10(rmsForDb / 32768);
         console.log(`[GeminiSTT] Audio level: RMS=${Math.round(rms)} (${rmsDb.toFixed(1)}dB), Peak=${maxSample}, Length=${pcmBuffer.length}bytes`);
         // Skip if audio is essentially silent (RMS < 100, about -50dB)
         if (rms < 100) {
@@ -265,10 +283,21 @@ If you cannot understand the audio or it's silent, return an empty string.`,
         if (!session) {
             return;
         }
-        // Clear timer first to prevent any pending flushes
+        // Clear timer first to prevent any NEW flushes from starting
         if (session.flushTimer) {
             clearTimeout(session.flushTimer);
             session.flushTimer = null;
+        }
+        // CRITICAL: Wait for any in-flight flush to complete before deleting session
+        // This prevents the race condition where flush is still running when session is deleted
+        if (session.pendingFlush) {
+            console.log(`[GeminiSTT] Waiting for pending flush to complete for ${participantId}`);
+            try {
+                await session.pendingFlush;
+            }
+            catch (error) {
+                console.error(`[GeminiSTT] Error during pending flush for ${participantId}:`, error);
+            }
         }
         // DISCARD remaining audio - don't flush it
         // This is intentional: we don't want post-speech audio to be transcribed

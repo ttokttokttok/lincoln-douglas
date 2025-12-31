@@ -397,7 +397,7 @@ class ElevenLabsTTSService {
         fallbackIndex: 0,  // First voice in list
       },
       aggressive: {
-        englishVoice: 'TX3LPaxmHKxFdv7VOQHJ',  // Liam - strong, confident
+        englishVoice: 'TxGEqnHWrfWFTfGW9XjX',  // Josh - energetic, direct, forceful
         fallbackIndex: 1,
       },
       beginner: {

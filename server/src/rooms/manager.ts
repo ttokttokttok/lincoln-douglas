@@ -29,6 +29,27 @@ interface Room {
 class RoomManager {
   private rooms: Map<string, Room> = new Map();
   private codeToRoomId: Map<string, string> = new Map();
+  // Track rooms with pending operations to prevent race conditions
+  private roomLocks: Set<string> = new Set();
+
+  /**
+   * Acquire a lock on a room for atomic operations
+   * Returns true if lock acquired, false if room is already locked
+   */
+  private acquireRoomLock(roomId: string): boolean {
+    if (this.roomLocks.has(roomId)) {
+      return false;
+    }
+    this.roomLocks.add(roomId);
+    return true;
+  }
+
+  /**
+   * Release a room lock
+   */
+  private releaseRoomLock(roomId: string): void {
+    this.roomLocks.delete(roomId);
+  }
 
   // Generate 6-character room code (no ambiguous characters)
   private generateCode(): string {
@@ -191,41 +212,52 @@ class RoomManager {
     roomId: string,
     participantId: string,
     displayName: string
-  ): { success: boolean; error?: string } {
+  ): { success: boolean; error?: string; isHost?: boolean } {
     const room = this.rooms.get(roomId);
 
     if (!room) {
       return { success: false, error: 'Room not found' };
     }
 
-    if (room.participants.size >= 2) {
-      return { success: false, error: 'Room is full' };
+    // Acquire lock to prevent race conditions during join
+    if (!this.acquireRoomLock(roomId)) {
+      return { success: false, error: 'Room is busy, please try again' };
     }
 
-    if (room.status !== 'waiting') {
-      return { success: false, error: 'Debate already in progress' };
+    try {
+      if (room.participants.size >= 2) {
+        return { success: false, error: 'Room is full' };
+      }
+
+      if (room.status !== 'waiting') {
+        return { success: false, error: 'Debate already in progress' };
+      }
+
+      const participant: Participant = {
+        id: participantId,
+        displayName,
+        side: null,
+        speakingLanguage: 'en',
+        listeningLanguage: 'en',
+        isReady: false,
+        isConnected: true,
+        isBot: false,
+      };
+
+      room.participants.set(participantId, participant);
+
+      // First participant becomes the host (atomic - inside lock)
+      let isHost = false;
+      if (!room.hostId || room.hostId === '') {
+        room.hostId = participantId;
+        isHost = true;
+      }
+      console.log(`Participant ${displayName} joined room ${room.code}${isHost ? ' (host)' : ''}`);
+
+      return { success: true, isHost };
+    } finally {
+      this.releaseRoomLock(roomId);
     }
-
-    const participant: Participant = {
-      id: participantId,
-      displayName,
-      side: null,
-      speakingLanguage: 'en',
-      listeningLanguage: 'en',
-      isReady: false,
-      isConnected: true,
-      isBot: false,
-    };
-
-    room.participants.set(participantId, participant);
-
-    // First participant becomes the host
-    if (!room.hostId || room.hostId === '') {
-      room.hostId = participantId;
-    }
-    console.log(`Participant ${displayName} joined room ${room.code}`);
-
-    return { success: true };
   }
 
   removeParticipant(roomId: string, participantId: string): void {
@@ -257,22 +289,34 @@ class RoomManager {
     return true;
   }
 
-  setParticipantSide(roomId: string, participantId: string, side: Side): boolean {
+  setParticipantSide(
+    roomId: string,
+    participantId: string,
+    side: Side
+  ): { success: boolean; error?: string } {
     const room = this.rooms.get(roomId);
-    if (!room) return false;
+    if (!room) {
+      return { success: false, error: 'Room not found' };
+    }
 
     const participant = room.participants.get(participantId);
-    if (!participant) return false;
+    if (!participant) {
+      return { success: false, error: 'Participant not found' };
+    }
 
     // Check if side is already taken
     for (const [id, p] of room.participants) {
       if (id !== participantId && p.side === side) {
-        return false; // Side already taken
+        const takenBy = p.displayName;
+        return {
+          success: false,
+          error: `${side} side is already taken by ${takenBy}`,
+        };
       }
     }
 
     participant.side = side;
-    return true;
+    return { success: true };
   }
 
   setParticipantLanguages(
@@ -321,6 +365,41 @@ class RoomManager {
 
     room.status = status;
     return true;
+  }
+
+  /**
+   * Atomically transition room from one status to another
+   * Returns true if transition succeeded, false if room wasn't in expected status
+   */
+  transitionRoomStatus(
+    roomId: string,
+    fromStatus: RoomStatus,
+    toStatus: RoomStatus
+  ): { success: boolean; error?: string } {
+    const room = this.rooms.get(roomId);
+    if (!room) {
+      return { success: false, error: 'Room not found' };
+    }
+
+    // Acquire lock for atomic transition
+    if (!this.acquireRoomLock(roomId)) {
+      return { success: false, error: 'Room is busy, please try again' };
+    }
+
+    try {
+      if (room.status !== fromStatus) {
+        return {
+          success: false,
+          error: `Room is not ${fromStatus} (current: ${room.status})`,
+        };
+      }
+
+      room.status = toStatus;
+      console.log(`Room ${room.code} transitioned: ${fromStatus} -> ${toStatus}`);
+      return { success: true };
+    } finally {
+      this.releaseRoomLock(roomId);
+    }
   }
 
   // Convert internal Room to serializable RoomState

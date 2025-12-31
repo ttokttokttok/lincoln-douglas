@@ -39,7 +39,8 @@ class BallotGeneratorService {
     /**
      * Generate a ballot for the debate
      */
-    async generateBallot(context) {
+    async generateBallot(context, retryCount = 0) {
+        const MAX_RETRIES = 2;
         if (!this.isInitialized || !this.model) {
             console.warn('[BallotGenerator] Not initialized, skipping ballot generation');
             return null;
@@ -48,13 +49,59 @@ class BallotGeneratorService {
         try {
             const result = await this.model.generateContent(prompt);
             const jsonText = result.response.text();
-            const generated = JSON.parse(jsonText);
+            // Try to extract JSON if response contains other text
+            let cleanedJson = jsonText.trim();
+            // Handle markdown code blocks
+            if (cleanedJson.startsWith('```json')) {
+                cleanedJson = cleanedJson.slice(7);
+            }
+            else if (cleanedJson.startsWith('```')) {
+                cleanedJson = cleanedJson.slice(3);
+            }
+            if (cleanedJson.endsWith('```')) {
+                cleanedJson = cleanedJson.slice(0, -3);
+            }
+            cleanedJson = cleanedJson.trim();
+            // Validate JSON structure before parsing
+            if (!cleanedJson.startsWith('{') || !cleanedJson.endsWith('}')) {
+                throw new Error(`Invalid JSON structure: doesn't start/end with braces`);
+            }
+            let generated;
+            try {
+                generated = JSON.parse(cleanedJson);
+            }
+            catch (parseError) {
+                console.error('[BallotGenerator] JSON parse failed, raw response:', jsonText.substring(0, 200));
+                throw parseError;
+            }
+            // Validate required fields
+            if (!generated.winner || !['AFF', 'NEG'].includes(generated.winner)) {
+                throw new Error(`Invalid winner field: ${generated.winner}`);
+            }
+            if (!generated.rfdSummary || typeof generated.rfdSummary !== 'string') {
+                generated.rfdSummary = 'Decision based on overall argument strength.';
+            }
+            if (!generated.rfdDetails || typeof generated.rfdDetails !== 'string') {
+                generated.rfdDetails = generated.rfdSummary;
+            }
+            if (!generated.speakerPoints || typeof generated.speakerPoints !== 'object') {
+                generated.speakerPoints = { AFF: 28, NEG: 28 };
+            }
+            if (!Array.isArray(generated.votingIssues)) {
+                generated.votingIssues = [];
+            }
             const ballot = this.formatBallot(generated, context);
             console.log(`[BallotGenerator] Generated ballot - Winner: ${ballot.winner}`);
             return ballot;
         }
         catch (error) {
             console.error('[BallotGenerator] Generation error:', error.message || error);
+            // Retry on failure
+            if (retryCount < MAX_RETRIES) {
+                console.log(`[BallotGenerator] Retrying... (attempt ${retryCount + 2}/${MAX_RETRIES + 1})`);
+                await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+                return this.generateBallot(context, retryCount + 1);
+            }
             return null;
         }
     }
@@ -129,6 +176,13 @@ IMPORTANT:
      * Format the generated ballot into the proper structure
      */
     formatBallot(generated, context) {
+        // Helper to safely clamp speaker points, handling NaN/undefined
+        const clampPoints = (points) => {
+            if (points === undefined || points === null || isNaN(points)) {
+                return 28; // Default to 28 (good)
+            }
+            return Math.min(30, Math.max(25, Math.round(points)));
+        };
         return {
             roomId: context.flowState.roomId,
             resolution: context.resolution,
@@ -136,13 +190,13 @@ IMPORTANT:
             winner: generated.winner,
             winnerName: generated.winner === 'AFF' ? context.affName : context.negName,
             loserName: generated.winner === 'AFF' ? context.negName : context.affName,
-            rfdSummary: generated.rfdSummary,
-            rfdDetails: generated.rfdDetails,
+            rfdSummary: generated.rfdSummary || 'Decision based on overall argument strength.',
+            rfdDetails: generated.rfdDetails || generated.rfdSummary || 'The judge found one side more persuasive.',
             speakerPoints: {
-                AFF: Math.min(30, Math.max(25, generated.speakerPoints.AFF)),
-                NEG: Math.min(30, Math.max(25, generated.speakerPoints.NEG)),
+                AFF: clampPoints(generated.speakerPoints?.AFF),
+                NEG: clampPoints(generated.speakerPoints?.NEG),
             },
-            votingIssues: generated.votingIssues,
+            votingIssues: generated.votingIssues || [],
         };
     }
     /**

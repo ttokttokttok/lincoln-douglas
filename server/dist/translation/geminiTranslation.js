@@ -39,8 +39,10 @@ class GeminiTranslationService {
     }
     /**
      * Translate text from source to target language with debate context
+     * Includes retry logic for transient API failures
      */
-    async translate(text, sourceLanguage, targetLanguage, context) {
+    async translate(text, sourceLanguage, targetLanguage, context, retryCount = 0) {
+        const MAX_RETRIES = 2;
         if (!this.isInitialized || !this.model) {
             console.warn('[Translation] Not initialized, skipping translation');
             return null;
@@ -84,6 +86,20 @@ class GeminiTranslationService {
         }
         catch (error) {
             console.error('[Translation] Error:', error.message || error);
+            // Retry on transient failures
+            if (retryCount < MAX_RETRIES) {
+                const isRetryable = error.message?.includes('503') ||
+                    error.message?.includes('429') ||
+                    error.message?.includes('timeout') ||
+                    error.message?.includes('ECONNRESET') ||
+                    error.message?.includes('network');
+                if (isRetryable) {
+                    const delayMs = Math.pow(2, retryCount) * 500; // Exponential backoff: 500ms, 1s, 2s
+                    console.log(`[Translation] Retrying in ${delayMs}ms... (attempt ${retryCount + 2}/${MAX_RETRIES + 1})`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    return this.translate(text, sourceLanguage, targetLanguage, context, retryCount + 1);
+                }
+            }
             return null;
         }
     }

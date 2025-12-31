@@ -46,8 +46,10 @@ class ArgumentExtractorService {
     }
     /**
      * Extract arguments from a speech transcript
+     * Includes retry logic for transient API failures
      */
-    async extractArguments(transcript, context) {
+    async extractArguments(transcript, context, retryCount = 0) {
+        const MAX_RETRIES = 2;
         if (!this.isInitialized || !this.model) {
             console.warn('[ArgumentExtractor] Not initialized, skipping extraction');
             return [];
@@ -61,13 +63,57 @@ class ArgumentExtractorService {
         try {
             const result = await this.model.generateContent(prompt);
             const jsonText = result.response.text();
-            const extracted = JSON.parse(jsonText);
+            // Clean up JSON response (handle markdown code blocks)
+            let cleanedJson = jsonText.trim();
+            if (cleanedJson.startsWith('```json')) {
+                cleanedJson = cleanedJson.slice(7);
+            }
+            else if (cleanedJson.startsWith('```')) {
+                cleanedJson = cleanedJson.slice(3);
+            }
+            if (cleanedJson.endsWith('```')) {
+                cleanedJson = cleanedJson.slice(0, -3);
+            }
+            cleanedJson = cleanedJson.trim();
+            // Validate JSON structure
+            if (!cleanedJson.startsWith('[') || !cleanedJson.endsWith(']')) {
+                console.warn('[ArgumentExtractor] Invalid JSON structure, expected array');
+                return [];
+            }
+            let extracted;
+            try {
+                extracted = JSON.parse(cleanedJson);
+            }
+            catch (parseError) {
+                console.error('[ArgumentExtractor] JSON parse failed, raw response:', jsonText.substring(0, 200));
+                throw parseError;
+            }
+            // Validate extracted is an array
+            if (!Array.isArray(extracted)) {
+                console.warn('[ArgumentExtractor] Expected array, got:', typeof extracted);
+                return [];
+            }
             const arguments_ = this.processExtracted(extracted, context.speech, side);
             console.log(`[ArgumentExtractor] Extracted ${arguments_.length} arguments from ${context.speech}`);
             return arguments_;
         }
         catch (error) {
             console.error('[ArgumentExtractor] Extraction error:', error.message || error);
+            // Retry on transient failures
+            if (retryCount < MAX_RETRIES) {
+                const isRetryable = error.message?.includes('503') ||
+                    error.message?.includes('429') ||
+                    error.message?.includes('timeout') ||
+                    error.message?.includes('ECONNRESET') ||
+                    error.message?.includes('network') ||
+                    error.message?.includes('JSON'); // Also retry on parse errors
+                if (isRetryable) {
+                    const delayMs = Math.pow(2, retryCount) * 500;
+                    console.log(`[ArgumentExtractor] Retrying in ${delayMs}ms... (attempt ${retryCount + 2}/${MAX_RETRIES + 1})`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    return this.extractArguments(transcript, context, retryCount + 1);
+                }
+            }
             return [];
         }
     }

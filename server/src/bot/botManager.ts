@@ -385,10 +385,9 @@ class BotManager {
    * Get appropriate TTS voice for bot character
    */
   private getBotVoice(character: BotCharacter, language: LanguageCode): string {
-    // Use default voices mapped by character type
-    // These will be customized per character in elevenLabsTts.ts
-    const defaultVoice = elevenLabsTTS.getDefaultVoice(language);
-    return defaultVoice?.voiceId || 'default';
+    // Use character-specific voice from ElevenLabs service
+    const botVoice = elevenLabsTTS.getBotVoice(character, language);
+    return botVoice.voiceId;
   }
 
   /**
