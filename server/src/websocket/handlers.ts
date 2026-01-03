@@ -2,6 +2,7 @@ import type {
   WSMessage,
   RoomCreatePayload,
   RoomJoinPayload,
+  RoomRejoinPayload,
   SignalPayload,
   Side,
   SpeechRole,
@@ -26,6 +27,7 @@ import {
 } from '../bot/botParticipant.js';
 import { botManager } from '../bot/botManager.js';
 import { roomManager } from '../rooms/manager.js';
+import { sessionManager } from '../rooms/sessionManager.js';
 import { debateManager } from '../timer/debateController.js';
 import { audioSessionManager } from '../audio/sessionManager.js';
 import { geminiSttService } from '../stt/geminiStt.js';
@@ -520,6 +522,10 @@ export function handleMessage(
       handleRoomJoin(client, message.payload as RoomJoinPayload, server);
       break;
 
+    case 'room:rejoin':
+      handleRoomRejoin(client, message.payload as RoomRejoinPayload, server);
+      break;
+
     case 'room:leave':
       handleRoomLeave(client, server);
       break;
@@ -627,15 +633,24 @@ function handleRoomCreate(
   // Create the room
   const room = roomManager.createRoom(client.id, displayName, resolution);
 
+  // Create session for the participant
+  const sessionToken = sessionManager.createSession(
+    client.id,
+    room.id,
+    client.id,
+    displayName
+  );
+
   // Associate client with room
   server.setClientRoom(client.id, room.id);
 
-  // Send room state to creator (include their ID)
+  // Send room state to creator (include their ID and session token)
   server.send(client.id, {
     type: 'room:state',
     payload: {
       room: roomManager.serializeRoom(room),
       yourParticipantId: client.id,
+      sessionToken,
     },
   });
 
@@ -670,16 +685,25 @@ function handleRoomJoin(
     return;
   }
 
+  // Create session for the participant
+  const sessionToken = sessionManager.createSession(
+    client.id,
+    room.id,
+    client.id,
+    displayName
+  );
+
   // Associate client with room
   server.setClientRoom(client.id, room.id);
 
-  // Send room state to new participant (include their ID)
+  // Send room state to new participant (include their ID and session token)
   const updatedRoom = roomManager.getRoom(room.id)!;
   server.send(client.id, {
     type: 'room:state',
     payload: {
       room: roomManager.serializeRoom(updatedRoom),
       yourParticipantId: client.id,
+      sessionToken,
     },
   });
 
@@ -704,18 +728,100 @@ function handleRoomJoin(
   console.log(`${displayName} joined room ${room.code}`);
 }
 
+/**
+ * Handle reconnection with session token
+ * This allows users to rejoin after a refresh without losing their spot
+ */
+function handleRoomRejoin(
+  client: ExtendedWebSocket,
+  payload: RoomRejoinPayload,
+  server: SignalingServer
+): void {
+  const { sessionToken, displayName } = payload;
+
+  if (!sessionToken || !displayName) {
+    server.sendError(client.id, 'Session token and display name are required', 'REJOIN_FAILED');
+    return;
+  }
+
+  // Attempt to rejoin using session token
+  const session = sessionManager.attemptRejoin(sessionToken, client.id, displayName);
+
+  if (!session) {
+    // Session not found or expired - client should do a fresh join
+    server.sendError(client.id, 'Session expired or invalid', 'SESSION_EXPIRED');
+    return;
+  }
+
+  // Get the room
+  const room = roomManager.getRoom(session.roomId);
+  if (!room) {
+    // Room was deleted - clean up session
+    sessionManager.removeSession(sessionToken);
+    server.sendError(client.id, 'Room no longer exists', 'ROOM_NOT_FOUND');
+    return;
+  }
+
+  // Mark participant as reconnected
+  roomManager.markParticipantReconnected(session.roomId, session.participantId);
+
+  // Associate new client with room
+  server.setClientRoom(client.id, session.roomId);
+
+  // Send room state to rejoining participant (include their original participant ID)
+  server.send(client.id, {
+    type: 'room:state',
+    payload: {
+      room: roomManager.serializeRoom(room),
+      yourParticipantId: session.participantId,
+      sessionToken,
+    },
+  });
+
+  // Notify other participants that this user reconnected
+  server.broadcastToRoom(
+    session.roomId,
+    {
+      type: 'participant:joined',
+      payload: {
+        participant: room.participants.get(session.participantId),
+        reconnected: true,
+      },
+    },
+    client.id
+  );
+
+  // Also send updated room state to all participants
+  server.broadcastToRoomAll(session.roomId, {
+    type: 'room:state',
+    payload: { room: roomManager.serializeRoom(room) },
+  });
+
+  console.log(`${displayName} rejoined room ${room.code} (session recovery)`);
+}
+
 function handleRoomLeave(client: ExtendedWebSocket, server: SignalingServer): void {
   if (!client.roomId) return;
 
   const roomId = client.roomId;
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
+  // Get and remove the session (explicit leave = no reconnect)
+  const session = sessionManager.getSessionByClient(client.id);
+  if (session) {
+    // Cancel any grace period timer and remove session
+    sessionManager.removeSession(session.sessionToken);
+  }
+
   // Remove participant from room
-  roomManager.removeParticipant(roomId, client.id);
+  roomManager.removeParticipant(roomId, participantId);
 
   // Notify other participants
   server.broadcastToRoom(roomId, {
     type: 'participant:left',
-    payload: { participantId: client.id },
+    payload: { participantId: participantId },
   });
 
   // Update room state for remaining participants
@@ -741,7 +847,9 @@ function handleRoomReady(
     return;
   }
 
-  roomManager.setParticipantReady(client.roomId, client.id, payload.isReady);
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+  roomManager.setParticipantReady(client.roomId, participantId, payload.isReady);
 
   // Broadcast updated room state
   const room = roomManager.getRoom(client.roomId);
@@ -766,8 +874,11 @@ function handleParticipantUpdate(
   // Payload can be either { updates: {...} } or direct updates like { side: 'AFF' }
   const updates = payload.updates || payload;
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   // Apply updates
-  roomManager.updateParticipant(client.roomId, client.id, updates as Record<string, unknown>);
+  roomManager.updateParticipant(client.roomId, participantId, updates as Record<string, unknown>);
 
   // Broadcast updated room state
   const room = roomManager.getRoom(client.roomId);
@@ -791,6 +902,9 @@ function handleSignaling(
     return;
   }
 
+  // Use participant ID for senderId (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   if (!payload.targetId) {
     // Broadcast to all other participants in the room
     server.broadcastToRoom(
@@ -798,18 +912,22 @@ function handleSignaling(
       {
         type: message.type,
         payload: {
-          senderId: client.id,
+          senderId: participantId,
           signal: payload.signal,
         },
       },
       client.id
     );
   } else {
-    // Send to specific target
-    server.send(payload.targetId, {
+    // Send to specific target - need to find the target's current client ID
+    // The targetId might be a participant ID, need to find their client
+    const targetSession = sessionManager.getSessionByParticipant(payload.targetId);
+    const targetClientId = targetSession?.currentClientId || payload.targetId;
+
+    server.send(targetClientId, {
       type: message.type,
       payload: {
-        senderId: client.id,
+        senderId: participantId,
         signal: payload.signal,
       },
     });
@@ -873,9 +991,12 @@ function handleSpeechEnd(client: ExtendedWebSocket, server: SignalingServer): vo
     return;
   }
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   // Verify the client is the current speaker
   const debateState = debateManager.getDebateState(client.roomId);
-  if (!debateState || debateState.currentSpeaker !== client.id) {
+  if (!debateState || debateState.currentSpeaker !== participantId) {
     server.sendError(client.id, 'Only the current speaker can end the speech');
     return;
   }
@@ -890,9 +1011,12 @@ function handleSpeechStart(client: ExtendedWebSocket, server: SignalingServer): 
     return;
   }
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   // Verify the client is on the side that speaks next
   const room = roomManager.getRoom(client.roomId);
-  const participant = room?.participants.get(client.id);
+  const participant = room?.participants.get(participantId);
   const timerState = debateManager.getTimerState(client.roomId);
 
   if (!participant || !timerState) {
@@ -931,9 +1055,12 @@ function handlePrepStart(
     return;
   }
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   // Verify the client is on the side they're trying to use prep for
   const room = roomManager.getRoom(client.roomId);
-  const participant = room?.participants.get(client.id);
+  const participant = room?.participants.get(participantId);
 
   if (!participant || participant.side !== payload.side) {
     server.sendError(client.id, 'You can only use your own prep time');
@@ -953,10 +1080,13 @@ function handlePrepEnd(client: ExtendedWebSocket, server: SignalingServer): void
     return;
   }
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   // Verify the client is on the side whose prep is running
   const timerState = debateManager.getTimerState(client.roomId);
   const room = roomManager.getRoom(client.roomId);
-  const participant = room?.participants.get(client.id);
+  const participant = room?.participants.get(participantId);
 
   if (!timerState?.isPrepTime || !timerState.prepSide) {
     server.sendError(client.id, 'No prep time is running');
@@ -988,25 +1118,28 @@ function handleAudioStart(
     return;
   }
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   const room = roomManager.getRoom(client.roomId);
-  const participant = room?.participants.get(client.id);
+  const participant = room?.participants.get(participantId);
 
   if (!participant) {
     server.sendError(client.id, 'Participant not found');
     return;
   }
 
-  // Start audio session
+  // Start audio session - use participantId for consistency
   const session = audioSessionManager.startSession(
     client.roomId,
-    client.id,
+    participantId,
     payload.speechId,
     payload.language
   );
 
-  // Start STT session
+  // Start STT session - use participantId
   if (geminiSttService.isReady()) {
-    geminiSttService.startSession(client.id, session.sessionId, payload.language);
+    geminiSttService.startSession(participantId, session.sessionId, payload.language);
   }
 
   console.log(`[Audio] Started streaming from ${participant.displayName} (${payload.language})`);
@@ -1030,18 +1163,21 @@ function handleAudioChunk(
     return; // Debate is over, ignore audio chunks
   }
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   // Record activity to reset inactivity timer
   debateManager.recordActivity(client.roomId);
 
   // Decode base64 audio data
   const audioBuffer = Buffer.from(payload.audioData, 'base64');
 
-  // Process the chunk through session manager
-  audioSessionManager.processChunk(client.id, audioBuffer);
+  // Process the chunk through session manager - use participantId
+  audioSessionManager.processChunk(participantId, audioBuffer);
 
-  // Forward to STT service for transcription
+  // Forward to STT service for transcription - use participantId
   if (geminiSttService.isReady()) {
-    geminiSttService.addAudioChunk(client.id, audioBuffer);
+    geminiSttService.addAudioChunk(participantId, audioBuffer);
   }
 }
 
@@ -1057,17 +1193,20 @@ async function handleAudioStop(
     return;
   }
 
-  const session = audioSessionManager.endSession(client.id);
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
+  const session = audioSessionManager.endSession(participantId);
 
   if (session) {
     const room = roomManager.getRoom(client.roomId);
-    const participant = room?.participants.get(client.id);
-    console.log(`[Audio] Stopped streaming from ${participant?.displayName || client.id}`);
+    const participant = room?.participants.get(participantId);
+    console.log(`[Audio] Stopped streaming from ${participant?.displayName || participantId}`);
   }
 
-  // End STT session (will flush any remaining audio)
+  // End STT session (will flush any remaining audio) - use participantId
   if (geminiSttService.isReady()) {
-    await geminiSttService.endSession(client.id);
+    await geminiSttService.endSession(participantId);
   }
 }
 
@@ -1223,6 +1362,9 @@ function handleVoiceSelect(
     return;
   }
 
+  // Use participant ID (may differ from client ID after reconnection)
+  const participantId = server.getParticipantId(client.id);
+
   const { speakingVoiceId } = payload;
 
   // Validate voice ID exists
@@ -1231,20 +1373,20 @@ function handleVoiceSelect(
     return;
   }
 
-  // Set voice for this participant
-  ttsSessionManager.setVoiceForParticipant(client.id, speakingVoiceId);
+  // Set voice for this participant - use participantId
+  ttsSessionManager.setVoiceForParticipant(participantId, speakingVoiceId);
 
   // Notify room of voice selection
   server.broadcastToRoomAll(client.roomId, {
     type: 'voice:select',
     payload: {
-      participantId: client.id,
+      participantId: participantId,
       speakingVoiceId,
     },
   });
 
   const voice = elevenLabsTTS.getVoiceById(speakingVoiceId);
-  console.log(`[Voice] ${client.id} selected voice: ${voice?.name || speakingVoiceId}`);
+  console.log(`[Voice] ${participantId} selected voice: ${voice?.name || speakingVoiceId}`);
 }
 
 // ==========================================
@@ -1304,6 +1446,14 @@ function handleBotRoomCreate(
     registerBot(botState);
   }
 
+  // Create session for the participant
+  const sessionToken = sessionManager.createSession(
+    client.id,
+    room.id,
+    client.id,
+    displayName
+  );
+
   // Associate client with room
   server.setClientRoom(client.id, room.id);
 
@@ -1313,6 +1463,7 @@ function handleBotRoomCreate(
     payload: {
       room: roomManager.serializeRoom(room),
       yourParticipantId: client.id,
+      sessionToken,
     },
   });
 

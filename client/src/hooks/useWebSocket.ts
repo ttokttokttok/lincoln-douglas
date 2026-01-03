@@ -138,8 +138,10 @@ export function useWebSocket(options: UseWebSocketOptions) {
     setConnectionError,
     setRoom,
     setMyParticipantId,
+    setSessionToken,
     setTimer,
     setPendingNextSpeech,
+    getSessionToken,
     reset,
   } = useRoomStore();
 
@@ -151,10 +153,14 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
       switch (message.type) {
         case 'room:state': {
-          const payload = message.payload as RoomStatePayload & { yourParticipantId?: string };
+          const payload = message.payload as RoomStatePayload & { yourParticipantId?: string; sessionToken?: string };
           setRoom(payload.room);
           if (payload.yourParticipantId) {
             setMyParticipantId(payload.yourParticipantId);
+          }
+          // Store session token for reconnection
+          if (payload.sessionToken) {
+            setSessionToken(payload.sessionToken);
           }
           break;
         }
@@ -178,7 +184,24 @@ export function useWebSocket(options: UseWebSocketOptions) {
 
         case 'room:error':
         case 'error': {
-          const payload = message.payload as ErrorPayload;
+          const payload = message.payload as ErrorPayload & { code?: string };
+
+          // Handle SESSION_EXPIRED - fall back to regular join
+          if (payload.code === 'SESSION_EXPIRED') {
+            console.log('[WS] Session expired, clearing token and doing fresh join');
+            setSessionToken(null);
+            // Send regular join request
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              const joinMessage = {
+                type: 'room:join',
+                payload: { code: roomCode, displayName: displayName },
+              };
+              wsRef.current.send(JSON.stringify(joinMessage));
+              console.log('[WS] Sent: room:join (fallback after session expired)');
+            }
+            break;
+          }
+
           setConnectionError(payload.message);
           console.error('[WS] Error:', payload.message);
           break;
@@ -358,7 +381,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     } catch (error) {
       console.error('[WS] Failed to parse message:', error);
     }
-  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setPendingNextSpeech, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList, onTimeoutWarning, onTimeoutEnd, onBotGenerating, onBotSpeechReady, onBotPrepStart, onBotPrepEnd, onBotTranscriptChunk]);
+  }, [setRoom, setTimer, setConnectionError, setMyParticipantId, setSessionToken, setPendingNextSpeech, roomCode, displayName, onSignal, onTranscript, onTranslation, onBallot, onTTSStart, onTTSChunk, onTTSEnd, onTTSError, onVoiceList, onTimeoutWarning, onTimeoutEnd, onBotGenerating, onBotSpeechReady, onBotPrepStart, onBotPrepEnd, onBotTranscriptChunk]);
 
   // Send a message
   const send = useCallback((type: WSMessageType, payload: unknown) => {
@@ -426,13 +449,26 @@ export function useWebSocket(options: UseWebSocketOptions) {
         ws.send(JSON.stringify(message));
         console.log('[WS] Sent: bot:room:create', message.payload);
       } else {
-        // Join the room directly (not via send() to avoid race condition)
-        const message = {
-          type: 'room:join',
-          payload: { code: roomCode, displayName: displayName },
-        };
-        ws.send(JSON.stringify(message));
-        console.log('[WS] Sent: room:join', message.payload);
+        // Check for existing session token (page refresh recovery)
+        const existingSessionToken = getSessionToken();
+
+        if (existingSessionToken) {
+          // Try to rejoin with session token first
+          const rejoinMessage = {
+            type: 'room:rejoin',
+            payload: { sessionToken: existingSessionToken, displayName: displayName },
+          };
+          ws.send(JSON.stringify(rejoinMessage));
+          console.log('[WS] Sent: room:rejoin (attempting session recovery)');
+        } else {
+          // No session - do regular join
+          const message = {
+            type: 'room:join',
+            payload: { code: roomCode, displayName: displayName },
+          };
+          ws.send(JSON.stringify(message));
+          console.log('[WS] Sent: room:join', message.payload);
+        }
       }
 
       onConnect?.();
@@ -473,10 +509,10 @@ export function useWebSocket(options: UseWebSocketOptions) {
         setConnectionError('Connection failed');
       }
     };
-  }, [roomCode, displayName, botConfig, handleMessage, send, setConnected, setConnecting, setConnectionError, onConnect, onDisconnect]);
+  }, [roomCode, displayName, botConfig, handleMessage, send, setConnected, setConnecting, setConnectionError, getSessionToken, onConnect, onDisconnect]);
 
-  // Disconnect from WebSocket
-  const disconnect = useCallback(() => {
+  // Disconnect from WebSocket (preserves session token for reconnection)
+  const disconnect = useCallback((clearSession = false) => {
     if (reconnectTimeoutRef.current) {
       clearTimeout(reconnectTimeoutRef.current);
       reconnectTimeoutRef.current = null;
@@ -495,8 +531,17 @@ export function useWebSocket(options: UseWebSocketOptions) {
       ws.close(1000, 'User disconnected');
     }
 
-    reset();
-  }, [reset]);
+    // Only clear session token if explicitly requested (e.g., leaving room)
+    // On page refresh/navigation, we want to preserve it for reconnection
+    if (clearSession) {
+      reset();
+    } else {
+      // Reset connection state but preserve session token
+      setConnected(false);
+      setConnecting(false);
+      setConnectionError(null);
+    }
+  }, [reset, setConnected, setConnecting, setConnectionError]);
 
   // Connect on mount, disconnect on unmount
   useEffect(() => {
@@ -590,6 +635,13 @@ export function useWebSocket(options: UseWebSocketOptions) {
     console.log('[WS] Selected voice:', speakingVoiceId);
   }, [send]);
 
+  // Explicitly leave room (clears session token)
+  const leaveRoom = useCallback(() => {
+    send('room:leave', {});
+    disconnect(true); // true = clear session token
+    console.log('[WS] Left room and cleared session');
+  }, [send, disconnect]);
+
   // Bot actions (Milestone 5)
   const createBotRoom = useCallback((
     resolution: string,
@@ -616,6 +668,7 @@ export function useWebSocket(options: UseWebSocketOptions) {
     send,
     connect,
     disconnect,
+    leaveRoom,
     setReady,
     setSide,
     setLanguages,

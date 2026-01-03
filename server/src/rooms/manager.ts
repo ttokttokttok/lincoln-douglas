@@ -260,6 +260,56 @@ class RoomManager {
     }
   }
 
+  /**
+   * Mark a participant as disconnected (during grace period)
+   * Does NOT remove them - they may reconnect
+   */
+  markParticipantDisconnected(roomId: string, participantId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+
+    const participant = room.participants.get(participantId);
+    if (!participant) return false;
+
+    participant.isConnected = false;
+    console.log(`Participant ${participantId} marked disconnected in room ${room.code}`);
+    return true;
+  }
+
+  /**
+   * Mark a participant as reconnected
+   */
+  markParticipantReconnected(roomId: string, participantId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+
+    const participant = room.participants.get(participantId);
+    if (!participant) return false;
+
+    participant.isConnected = true;
+    console.log(`Participant ${participantId} reconnected in room ${room.code}`);
+    return true;
+  }
+
+  /**
+   * Get number of connected participants (not in grace period)
+   */
+  getConnectedParticipantCount(roomId: string): number {
+    const room = this.rooms.get(roomId);
+    if (!room) return 0;
+
+    let count = 0;
+    for (const participant of room.participants.values()) {
+      if (participant.isConnected) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Remove a participant from the room (called after grace period expires)
+   */
   removeParticipant(roomId: string, participantId: string): void {
     const room = this.rooms.get(roomId);
     if (!room) return;
@@ -273,6 +323,18 @@ class RoomManager {
       this.codeToRoomId.delete(room.code);
       console.log(`Room ${room.code} deleted (empty)`);
     }
+  }
+
+  /**
+   * Check if room should allow a new participant
+   * Considers connected participants and those in grace period
+   */
+  canAcceptNewParticipant(roomId: string): boolean {
+    const room = this.rooms.get(roomId);
+    if (!room) return false;
+    if (room.status !== 'waiting') return false;
+    // Allow joining only if there's room (max 2 total participants)
+    return room.participants.size < 2;
   }
 
   updateParticipant(

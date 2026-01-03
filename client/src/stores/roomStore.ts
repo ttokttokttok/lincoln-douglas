@@ -26,6 +26,7 @@ interface RoomStore {
   // Room state
   room: RoomState | null;
   myParticipantId: string | null;
+  sessionToken: string | null;
 
   // Timer state
   timer: TimerState | null;
@@ -42,6 +43,7 @@ interface RoomStore {
   setConnectionError: (error: string | null) => void;
   setRoom: (room: RoomState | null) => void;
   setMyParticipantId: (id: string | null) => void;
+  setSessionToken: (token: string | null) => void;
   setTimer: (timer: TimerState | null) => void;
   setPendingNextSpeech: (speech: SpeechRole | null) => void;
   updateParticipant: (participantId: string, updates: Partial<Participant>) => void;
@@ -54,6 +56,7 @@ interface RoomStore {
   getMyParticipant: () => Participant | null;
   getOpponent: () => Participant | null;
   isPracticeMode: () => boolean;
+  getSessionToken: () => string | null;
 }
 
 const initialState = {
@@ -62,6 +65,7 @@ const initialState = {
   connectionError: null,
   room: null,
   myParticipantId: null,
+  sessionToken: null as string | null,
   timer: null,
   pendingNextSpeech: null as SpeechRole | null,
   botConfig: null as BotConfig | null,
@@ -77,6 +81,15 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   setConnectionError: (error) => set({ connectionError: error }),
   setRoom: (room) => set({ room }),
   setMyParticipantId: (id) => set({ myParticipantId: id }),
+  setSessionToken: (token) => {
+    set({ sessionToken: token });
+    // Also persist to sessionStorage for page refresh recovery
+    if (token) {
+      sessionStorage.setItem('debateSessionToken', token);
+    } else {
+      sessionStorage.removeItem('debateSessionToken');
+    }
+  },
   setTimer: (timer) => set({ timer }),
   setPendingNextSpeech: (speech) => set({ pendingNextSpeech: speech }),
   setBotConfig: (config) => set({ botConfig: config }),
@@ -96,7 +109,10 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
     });
   },
 
-  reset: () => set(initialState),
+  reset: () => {
+    sessionStorage.removeItem('debateSessionToken');
+    set(initialState);
+  },
 
   getMyParticipant: () => {
     const { room, myParticipantId } = get();
@@ -113,5 +129,12 @@ export const useRoomStore = create<RoomStore>((set, get) => ({
   isPracticeMode: () => {
     const { room } = get();
     return room?.mode === 'practice';
+  },
+
+  getSessionToken: () => {
+    // Try store first, then sessionStorage (for page refresh recovery)
+    const { sessionToken } = get();
+    if (sessionToken) return sessionToken;
+    return sessionStorage.getItem('debateSessionToken');
   },
 }));

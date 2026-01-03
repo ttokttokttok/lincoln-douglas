@@ -95,6 +95,7 @@ export interface TimerState {
 export type WSMessageType =
   | 'room:create'
   | 'room:join'
+  | 'room:rejoin'  // Reconnect with session token
   | 'room:leave'
   | 'room:state'
   | 'room:ready'
@@ -171,8 +172,14 @@ export interface RoomJoinPayload {
   displayName: string;
 }
 
+export interface RoomRejoinPayload {
+  sessionToken: string;
+  displayName: string;
+}
+
 export interface RoomStatePayload {
   room: RoomState;
+  sessionToken?: string;  // Sent on join/rejoin for reconnection
 }
 
 export interface ParticipantUpdatePayload {

@@ -4,6 +4,7 @@ import { v4 as uuid } from 'uuid';
 import type { WSMessage } from '@shared/types';
 import { handleMessage, initializeDebateCallbacks } from './handlers.js';
 import { roomManager } from '../rooms/manager.js';
+import { sessionManager } from '../rooms/sessionManager.js';
 import { audioSessionManager } from '../audio/sessionManager.js';
 import { geminiSttService } from '../stt/geminiStt.js';
 import { ttsSessionManager } from '../tts/sessionManager.js';
@@ -100,56 +101,90 @@ class SignalingServer {
   }
 
   private handleDisconnect(client: ExtendedWebSocket): void {
-    // Clean up audio/STT/TTS sessions for this client
+    // Get participant ID (may differ from client ID after reconnection)
+    const participantId = this.getParticipantId(client.id);
+
+    // Clean up audio/STT/TTS sessions for this participant
     // This prevents resource leaks and wasted API calls
-    const audioSession = audioSessionManager.endSession(client.id);
+    const audioSession = audioSessionManager.endSession(participantId);
     if (audioSession) {
-      console.log(`[Cleanup] Ended audio session for disconnected client ${client.id}`);
+      console.log(`[Cleanup] Ended audio session for disconnected participant ${participantId}`);
     }
 
     // End STT session (async but we don't need to await on disconnect)
-    geminiSttService.endSession(client.id).catch(err => {
-      console.error(`[Cleanup] Error ending STT session for ${client.id}:`, err);
+    geminiSttService.endSession(participantId).catch(err => {
+      console.error(`[Cleanup] Error ending STT session for ${participantId}:`, err);
     });
 
-    // Clear any TTS queue for this client
-    ttsSessionManager.clearQueue(client.id);
+    // Clear any TTS queue for this participant
+    ttsSessionManager.clearQueue(participantId);
 
     if (client.roomId) {
       const roomId = client.roomId;
 
-      // Remove participant from room
-      roomManager.removeParticipant(roomId, client.id);
+      // Use session manager to handle disconnect with grace period
+      const result = sessionManager.handleDisconnect(client.id, (session) => {
+        // Grace period expired - now actually remove the participant
+        this.handleGracePeriodExpired(session.roomId, session.participantId);
+      });
 
-      // Notify other participants
-      this.broadcastToRoom(
-        roomId,
-        {
-          type: 'participant:left',
-          payload: { participantId: client.id },
-        },
-        client.id
-      );
+      if (result?.startedGracePeriod) {
+        // Mark participant as disconnected (but don't remove yet)
+        roomManager.markParticipantDisconnected(roomId, result.session.participantId);
 
-      // Check if room still exists (might have been deleted if empty)
-      const room = roomManager.getRoom(roomId);
-      if (room) {
-        // Send updated room state to remaining participants
-        this.broadcastToRoom(roomId, {
-          type: 'room:state',
-          payload: { room: roomManager.serializeRoom(room) },
-        });
-      } else {
-        // Room was deleted (last participant left) - clean up debate state
-        // This prevents resource leaks from orphaned timers and state
-        debateManager.cleanupRoom(roomId);
-        flowStateManager.clearRoom(roomId);
-        ttsSessionManager.endRoomSessions(roomId);
-        console.log(`[Cleanup] Cleaned up debate resources for deleted room ${roomId}`);
+        // Notify other participants that this user disconnected (but may reconnect)
+        const room = roomManager.getRoom(roomId);
+        if (room) {
+          this.broadcastToRoom(
+            roomId,
+            {
+              type: 'room:state',
+              payload: { room: roomManager.serializeRoom(room) },
+            },
+            client.id
+          );
+        }
+
+        console.log(`Client ${client.id} disconnected from room ${roomId} (grace period started)`);
+      } else if (!result) {
+        // No session found - this was a client that never joined a room properly
+        // Just clean up
+        console.log(`Client ${client.id} disconnected (no session)`);
       }
-
-      console.log(`Client ${client.id} disconnected from room ${roomId}`);
     }
+  }
+
+  /**
+   * Handle grace period expiration - participant didn't reconnect in time
+   */
+  private handleGracePeriodExpired(roomId: string, participantId: string): void {
+    // Now actually remove the participant
+    roomManager.removeParticipant(roomId, participantId);
+
+    // Notify remaining participants
+    this.broadcastToRoom(roomId, {
+      type: 'participant:left',
+      payload: { participantId },
+    });
+
+    // Check if room still exists (might have been deleted if empty)
+    const room = roomManager.getRoom(roomId);
+    if (room) {
+      // Send updated room state to remaining participants
+      this.broadcastToRoom(roomId, {
+        type: 'room:state',
+        payload: { room: roomManager.serializeRoom(room) },
+      });
+    } else {
+      // Room was deleted (last participant left) - clean up debate state
+      debateManager.cleanupRoom(roomId);
+      flowStateManager.clearRoom(roomId);
+      ttsSessionManager.endRoomSessions(roomId);
+      sessionManager.removeRoomSessions(roomId);
+      console.log(`[Cleanup] Cleaned up debate resources for deleted room ${roomId}`);
+    }
+
+    console.log(`Participant ${participantId} removed after grace period expired`);
   }
 
   // Send message to a specific client by ID
@@ -220,6 +255,20 @@ class SignalingServer {
   getClientRoomId(clientId: string): string | undefined {
     const client = this.clients.get(clientId);
     return client?.roomId;
+  }
+
+  /**
+   * Get the participant ID for a client.
+   * After reconnection, client ID differs from participant ID.
+   * This looks up the session to find the original participant ID.
+   */
+  getParticipantId(clientId: string): string {
+    const session = sessionManager.getSessionByClient(clientId);
+    if (session) {
+      return session.participantId;
+    }
+    // If no session, client ID is the participant ID (first connection)
+    return clientId;
   }
 }
 

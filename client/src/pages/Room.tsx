@@ -79,7 +79,7 @@ export function Room() {
     getStream,
     toggleVideo,
     toggleAudio,
-  } = useMediaStream({ video: true, audio: true });
+  } = useMediaStream({ video: true, audio: true, autoStart: true });
 
   // Handle remote stream
   const handleRemoteStream = useCallback((stream: MediaStream) => {
@@ -100,6 +100,7 @@ export function Room() {
     isConnecting: isPeerConnecting,
     createPeer,
     signal: signalPeer,
+    destroy: destroyPeer,
   } = usePeer({
     localStream,
     onRemoteStream: handleRemoteStream,
@@ -454,28 +455,39 @@ export function Room() {
     }
   }, [roomId, navigate]);
 
-  // Request camera access on mount
-  useEffect(() => {
-    getStream().catch((err) => {
-      console.error('[Room] Failed to get media:', err);
-    });
-  }, []);
+  // Camera access is now handled by autoStart: true in useMediaStream
 
   // Process pending signals when localStream becomes available
+  // Also retry periodically in case signals arrive while waiting for camera
   useEffect(() => {
-    if (localStream && pendingSignalsRef.current.length > 0) {
-      console.log('[Room] Processing', pendingSignalsRef.current.length, 'pending signals');
-      const pending = [...pendingSignalsRef.current];
-      pendingSignalsRef.current = [];
+    const processPendingSignals = async () => {
+      if (localStream && pendingSignalsRef.current.length > 0) {
+        console.log('[Room] Processing', pendingSignalsRef.current.length, 'pending signals');
+        const pending = [...pendingSignalsRef.current];
+        pendingSignalsRef.current = [];
 
-      // Process each pending signal in order
-      (async () => {
+        // Process each pending signal in order
         for (const message of pending) {
           const signalData = message.signal as SignalData;
           console.log('[Room] Processing queued signal:', signalData.type);
           await processSignal(signalData);
         }
-      })();
+      }
+    };
+
+    // Process immediately if we have localStream
+    processPendingSignals();
+
+    // Also set up a periodic check in case signals arrive after localStream is ready
+    // but before the effect re-runs
+    if (localStream) {
+      const interval = setInterval(() => {
+        if (pendingSignalsRef.current.length > 0) {
+          processPendingSignals();
+        }
+      }, 500);
+
+      return () => clearInterval(interval);
     }
   }, [localStream, processSignal]);
 
@@ -533,7 +545,47 @@ export function Room() {
         clearTimeout(timeout);
       };
     }
-  }, [localStream, opponentForPeer?.id, myParticipantId, isPeerConnected, isPeerConnecting, createPeer]);
+  }, [localStream, opponentForPeer?.id, opponentForPeer?.isConnected, myParticipantId, isPeerConnected, isPeerConnecting, createPeer]);
+
+  // Track opponent's connection status to detect reconnection
+  const prevOpponentConnectedRef = useRef<boolean | undefined>(undefined);
+
+  // Detect when opponent reconnects and re-initiate peer connection
+  useEffect(() => {
+    const currentOpponentConnected = opponentForPeer?.isConnected;
+    const prevConnected = prevOpponentConnectedRef.current;
+
+    // Detect reconnection: was disconnected (false), now connected (true)
+    if (prevConnected === false && currentOpponentConnected === true) {
+      console.log('[Room] Opponent reconnected - resetting peer connection');
+
+      // Destroy existing peer connection
+      destroyPeer();
+      setRemoteStream(null);
+
+      // Reset initiation refs so we can re-initiate
+      hasInitiatedRef.current = false;
+      isInitiatorRef.current = false;
+      hasPeerRef.current = false;
+
+      // Re-initiate peer connection after a short delay
+      // The delay allows state to settle and the initiation effect to re-run
+      setTimeout(() => {
+        if (localStream && opponentForPeer && myParticipantId) {
+          const shouldInitiate = myParticipantId > opponentForPeer.id;
+          if (shouldInitiate) {
+            console.log('[Room] Re-initiating peer connection after opponent reconnect');
+            hasInitiatedRef.current = true;
+            isInitiatorRef.current = true;
+            createPeer(true);
+          }
+        }
+      }, 500);
+    }
+
+    // Update the ref for next comparison
+    prevOpponentConnectedRef.current = currentOpponentConnected;
+  }, [opponentForPeer?.isConnected, opponentForPeer?.id, localStream, myParticipantId, destroyPeer, createPeer]);
 
   // Get opponent data
   const opponent = room?.participants.find(p => p.id !== myParticipantId);
